@@ -501,6 +501,7 @@ endif
 ifeq ($(strip $(FORTRAN_LEAF_TASK)),1)
 GEN_FORTRAN_OBJS	:= $(GEN_FORTRAN_SRC:.f90=.o)
 LD_FLAGS	+= -lgfortran
+F90	:= gfortran
 endif
 
 ifndef NO_BUILD_RULES
@@ -528,9 +529,11 @@ $(SLIB_REALM) : $(LOW_RUNTIME_OBJS)
 
 $(GEN_OBJS) : %.o : %.cc
 	$(CXX) -o $@ -c $< $(CC_FLAGS) $(INC_FLAGS)
-	
+
+ifeq ($(strip $(FORTRAN_LEAF_TASK)),1)	
 $(GEN_FORTRAN_OBJS) : %.o : %.f90
 	$(F90) -o $@ -c $< $(CC_FLAGS) $(INC_FLAGS)
+endif
 
 $(ASM_OBJS) : %.o : %.S
 	$(CXX) -o $@ -c $< $(CC_FLAGS) $(INC_FLAGS)
