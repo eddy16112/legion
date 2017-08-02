@@ -32,12 +32,16 @@ OUTFILE		?= partitioning
 GEN_SRC		?= partitioning.cc		# .cc files
 GEN_GPU_SRC	?=				# .cu files
 
+# Fortran task file name
+GEN_FORTRAN_SRC	?= daxpy_task_f.f90
+
 # You can modify these variables, some will be appended to by the runtime makefile
 INC_FLAGS	?=
 CC_FLAGS	?=
 NVCC_FLAGS	?=
 GASNET_FLAGS	?=
 LD_FLAGS	?=
+FORTRAN_LEAF_TASK	?= 1
 # For Point and Rect typedefs
 CC_FLAGS	+= -std=c++11
 
