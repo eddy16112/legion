@@ -84,7 +84,20 @@ module legion_fortran_object_oriented
         module procedure legion_field_accessor_3d_constructor
     end interface
     
+    Type CellReal8
+        real(kind=8), dimension(:), pointer :: y
+    end type CellReal8
 
+    type LegionArray2DReal8
+        type(CellReal8), dimension(3) :: x
+        integer :: dim_x
+        integer :: dim_y
+        integer :: ld
+    end type LegionArray2DReal8
+    
+    interface LegionArray2DReal8
+        module procedure legion_array_2d_real8_constructor
+    end interface
 contains
     
     function legion_point_1d_constructor_integer4(x)
@@ -442,5 +455,41 @@ contains
              stop 'initialize: unexpected type for LegionFieldAccessor object!'
         end select
     end subroutine legion_field_accessor_write_point_real8
+    
+    function legion_array_2d_real8_constructor(raw_ptr, num_rows, num_columns, ld)
+        implicit none
+        
+        type(LegionArray2DReal8)                 :: legion_array_2d_real8_constructor
+        type(c_ptr), intent(in)                  :: raw_ptr
+        integer, intent(in)                      :: num_rows
+        integer, intent(in)                      :: num_columns
+        type(legion_byte_offset_f_t), intent(in) :: ld
+            
+        type(c_ptr), allocatable :: ptr_columns(:)
+        type(LegionArray2DReal8) :: tmp_2d_array
+        real(kind=8), pointer :: column(:)
+        real(kind=8), target :: col(10)
+        integer :: i
+        type(CellReal8), allocatable :: matrix(:)
+        
+        allocate(matrix(num_columns))
+        
+     !   allocate(tmp_2d_array%x(1:num_columns))
+        col(1:10) = 1
+        tmp_2d_array%x(1)%y(1:10) => col
+        matrix(1)%y =>col
+        column => col
+            
+        tmp_2d_array%dim_x = num_columns
+        tmp_2d_array%dim_y = num_rows
+        tmp_2d_array%ld = ld%offset
+        allocate(ptr_columns(num_columns))
+        call legion_convert_1d_to_2d_column_major_c(raw_ptr, ptr_columns, ld, num_columns)
+        do i = 1, num_columns
+            call c_f_pointer(ptr_columns(i), column, [num_rows])
+            call c_f_pointer(ptr_columns(i), tmp_2d_array%x(i)%y, [num_rows])
+        end do
+        legion_array_2d_real8_constructor = tmp_2d_array
+    end function legion_array_2d_real8_constructor
 
 end module
