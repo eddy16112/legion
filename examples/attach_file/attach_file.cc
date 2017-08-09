@@ -207,17 +207,25 @@ void top_level_task(const Task *task,
   double ts_start, ts_mid, ts_end;
   ts_start = Realm::Clock::current_time_in_microseconds();
   PhysicalRegion cp_pr;
+  double *cp_ptr = (double*)malloc(sizeof(double)*(num_elements-1));
 #ifdef USE_HDF
   if(*hdf5_file_name) {
     // create the HDF5 file first - attach wants it to already exist
-    bool ok = generate_hdf_file(hdf5_file_name, hdf5_dataset_name, num_elements);
+/*    bool ok = generate_hdf_file(hdf5_file_name, hdf5_dataset_name, num_elements);
     assert(ok);
     std::map<FieldID,const char*> field_map;
     field_map[FID_CP] = hdf5_dataset_name;
     printf("Checkpointing data to HDF5 file '%s' (dataset='%s')\n",
 	   hdf5_file_name, hdf5_dataset_name);
     cp_pr = runtime->attach_hdf5(ctx, hdf5_file_name, cp_lr, cp_lr, field_map,
-				 LEGION_FILE_READ_WRITE);
+				 LEGION_FILE_READ_WRITE);*/
+                 
+    
+    std::map<FieldID,void*> field_pointer_map;
+    field_pointer_map[FID_CP] = cp_ptr;
+    printf("Checkpointing data to arrray fid %d, ptr %p\n", FID_CP, cp_ptr);  
+    cp_pr = runtime->attach_fortran_array(ctx, cp_lr, cp_lr, field_pointer_map,
+				 LEGION_FILE_READ_WRITE);         
   } else
 #endif
   {
