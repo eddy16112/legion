@@ -141,7 +141,6 @@ namespace Realm {
     return create_instance(inst, memory, layout, reqs, wait_on);
   }
 
-
   ////////////////////////////////////////////////////////////////////////
   //
   // class RegionInstance::DestroyedField
