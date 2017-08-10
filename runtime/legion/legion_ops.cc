@@ -13970,7 +13970,7 @@ namespace Legion {
             result = node->create_array_instance(EXTERNAL_FORTRAN_ARRAY, sizes, field_pointers,
                                         (file_mode == LEGION_FILE_READ_ONLY));
             constraints.specialized_constraint = 
-              SpecializedConstraint(HDF5_FILE_SPECIALIZE);
+              SpecializedConstraint(NORMAL_SPECIALIZE);
             break;
           }
         default:
@@ -14321,10 +14321,10 @@ namespace Legion {
       assert(!manager->is_reduction_manager()); 
 #endif
       InstanceManager *inst_manager = manager->as_instance_manager(); 
-      if (!inst_manager->is_attached_file())
+      /*if (!inst_manager->is_attached_file())
         REPORT_LEGION_ERROR(ERROR_ILLEGAL_DETACH_OPERATION,
                       "Illegal detach operation on a physical region which "
-                      "was not attached!")
+                      "was not attached!") */
       std::set<RtEvent> applied_conditions;
       ApEvent detach_event = 
         runtime->forest->detach_file(requirement, this, 0/*idx*/, 

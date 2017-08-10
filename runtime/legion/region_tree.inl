@@ -2785,16 +2785,16 @@ namespace Legion {
       // No profiling for these kinds of instances currently
       Realm::ProfilingRequestSet requests;
       PhysicalInstance result;
-/*      LgEvent ready(PhysicalInstance::create_hdf5_instance(result, file_name, 
+      LgEvent ready(PhysicalInstance::create_array_instance(result, 
 							   local_space,
 							   field_sizes,
-							   field_files,
-							   read_only,
+							   field_pointers,
+							   0,
 							   requests));
       // TODO
-      ready.lg_wait();*/
-      assert(0 && "no HDF5 support");
-      result = PhysicalInstance::NO_INST;
+      ready.lg_wait();
+     // assert(0 && "no HDF5 support");
+    //  result = PhysicalInstance::NO_INST;
       return result;
     }
 
