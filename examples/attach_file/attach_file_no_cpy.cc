@@ -29,11 +29,6 @@
 #include "runtime_impl.h"
 using namespace Legion;
 
-template<typename FT, int N, typename T = coord_t>
-using AccessorRO = FieldAccessor<READ_ONLY,FT,N,T,Realm::AffineAccessor<FT,N,T> >;
-template<typename FT, int N, typename T = coord_t>
-using AccessorWD = FieldAccessor<WRITE_DISCARD,FT,N,T,Realm::AffineAccessor<FT,N,T> >;
-
 /*
  * In this example we illustrate how the Legion
  * programming model supports multiple partitions
@@ -172,7 +167,14 @@ void top_level_task(const Task *task,
     allocator.allocate_field(sizeof(double), FID_CP);
   }
   LogicalRegion cp_lr = runtime->create_logical_region(ctx, is, cp_fs);
-  
+  PhysicalRegion cp_pr;
+  double *cp_ptr = (double*)malloc(sizeof(double)*(num_elements));
+  std::map<FieldID,void*> field_pointer_map;
+  field_pointer_map[FID_DERIV] = cp_ptr;
+  printf("Checkpointing data to arrray fid %d, ptr %p\n", FID_CP, cp_ptr);  
+  cp_pr = runtime->attach_fortran_array(ctx, stencil_lr, stencil_lr, field_pointer_map,
+			 LEGION_FILE_READ_WRITE); 
+       
   Rect<1> color_bounds(0,num_subregions-1);
   IndexSpaceT<1> color_is = runtime->create_index_space(ctx, color_bounds);
 
@@ -217,7 +219,7 @@ void top_level_task(const Task *task,
   //clock_gettime(CLOCK_MONOTONIC, &ts_start);
   double ts_start, ts_mid, ts_end;
   ts_start = Realm::Clock::current_time_in_microseconds();
-  PhysicalRegion cp_pr;
+  
   
   Memory memory = Machine::MemoryQuery(Machine::get_machine())
     .local_address_space()
@@ -227,7 +229,7 @@ void top_level_task(const Task *task,
   Realm::LocalCPUMemory *m_impl = (Realm::LocalCPUMemory *)Realm::get_runtime()->get_memory_impl(memory);
   unsigned char* base = (unsigned char*)m_impl->base;
   unsigned char* offset_ptr = base + 1024*8*8;
-  double *cp_ptr = (double*)malloc(sizeof(double)*(num_elements));
+  
   //char* cp_ptr_char = new char[sizeof(double)*(num_elements-1)*2];
   //double *cp_ptr = (double*)cp_ptr_char;
  // double *cp_ptr = (double*)offset_ptr;
@@ -245,11 +247,7 @@ void top_level_task(const Task *task,
 				 LEGION_FILE_READ_WRITE);*/
                  
     
-    std::map<FieldID,void*> field_pointer_map;
-    field_pointer_map[FID_CP] = cp_ptr;
-    printf("Checkpointing data to arrray fid %d, ptr %p, base %p\n", FID_CP, cp_ptr, base);  
-    cp_pr = runtime->attach_fortran_array(ctx, cp_lr, cp_lr, field_pointer_map,
-				 LEGION_FILE_READ_WRITE);         
+            
   } else
 #endif
   {
@@ -264,20 +262,20 @@ void top_level_task(const Task *task,
 				 LEGION_FILE_READ_WRITE);
   }
   //cp_pr.wait_until_valid();
-  CopyLauncher copy_launcher;
+/*  CopyLauncher copy_launcher;
   copy_launcher.add_copy_requirements(
       RegionRequirement(stencil_lr, READ_ONLY, EXCLUSIVE, stencil_lr),
       RegionRequirement(cp_lr, WRITE_DISCARD, EXCLUSIVE, cp_lr));
   copy_launcher.add_src_field(0, FID_DERIV);
   copy_launcher.add_dst_field(0, FID_CP);
-  runtime->issue_copy_operation(ctx, copy_launcher);
+  runtime->issue_copy_operation(ctx, copy_launcher);*/
   
   //clock_gettime(CLOCK_MONOTONIC, &ts_mid);
   ts_mid = Realm::Clock::current_time_in_microseconds();
 #ifdef USE_HDF
   if(*hdf5_file_name) {
 //    runtime->detach_hdf5(ctx, cp_pr);
-     runtime->detach_fortran_array(ctx, cp_pr);
+ //    runtime->detach_fortran_array(ctx, cp_pr);
   } else
 #endif
   {
@@ -327,7 +325,7 @@ void init_field_task(const Task *task,
   const int point = task->index_point.point_data[0];
   printf("Initializing field %d for block %d...\n", fid, point);
 
-  const AccessorWD<double,1> acc(regions[0], fid);
+  const FieldAccessor<WRITE_DISCARD,double,1> acc(regions[0], fid);
 
   int i = point;
   Rect<1> rect = runtime->get_index_space_domain(ctx,
@@ -356,8 +354,8 @@ void stencil_task(const Task *task,
   FieldID read_fid = *(task->regions[0].privilege_fields.begin());
   FieldID write_fid = *(task->regions[1].privilege_fields.begin());
 
-  const AccessorRO<double,1> read_acc(regions[0], read_fid);
-  const AccessorWD<double,1> write_acc(regions[1], write_fid);
+  const FieldAccessor<READ_ONLY,double,1> read_acc(regions[0], read_fid);
+  const FieldAccessor<WRITE_DISCARD,double,1> write_acc(regions[1], write_fid);
 
   Rect<1> rect = runtime->get_index_space_domain(ctx,
                   task->regions[1].region.get_index_space());
@@ -426,8 +424,8 @@ void check_task(const Task *task,
   FieldID src_fid = *(task->regions[0].privilege_fields.begin());
   FieldID dst_fid = *(task->regions[1].privilege_fields.begin());
 
-  const AccessorRO<double,1> src_acc(regions[0], src_fid);
-  const AccessorRO<double,1> dst_acc(regions[1], dst_fid);
+  const FieldAccessor<READ_ONLY,double,1> src_acc(regions[0], src_fid);
+  const FieldAccessor<READ_ONLY,double,1> dst_acc(regions[1], dst_fid);
 
   Rect<1> rect = runtime->get_index_space_domain(ctx,
                   task->regions[1].region.get_index_space());
@@ -457,10 +455,10 @@ void check_task(const Task *task,
     
     double expected = (-l2 + 8.0*l1 - 8.0*r1 + r2) / 12.0;
     double received = dst_acc[*pir];
-    if (i == 0 || i == 1000) printf("result %d, %f\n", i, received);
-//    if (my_ptr[i] != received) {
-//        printf("transfer error %d, %f\n", i, my_ptr[i]);
-//    }
+    if (i == 0 || i == 1000) printf("result %d, %f, ptr %p\n", i, received, dst_acc.ptr(rect.lo));
+    if (my_ptr[i] != received) {
+        printf("transfer error %d, %f\n", i, my_ptr[i]);
+    }
     i++;
     // Probably shouldn't bitwise compare floating point
     // numbers but the order of operations are the same so they
