@@ -142,7 +142,7 @@ namespace Realm {
     bool serialize(S& serializer) const;
 
     ZPoint<N, size_t> strides;
-    size_t offset;
+    ptrdiff_t offset;
   };
 
   template <int N, typename T>
