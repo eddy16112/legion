@@ -71,9 +71,9 @@ void top_level_task(const Task *task,
   {
     FieldAllocator allocator = 
       runtime->create_field_allocator(ctx, input_fs);
-    allocator.allocate_field(sizeof(daxpy_t),FID_X);
+    allocator.allocate_field(sizeof(double),FID_X);
     runtime->attach_name(input_fs, FID_X, "X");
-    allocator.allocate_field(sizeof(daxpy_t),FID_Y);
+    allocator.allocate_field(sizeof(float),FID_Y);
     runtime->attach_name(input_fs, FID_Y, "Y");
   }
   FieldSpace output_fs = runtime->create_field_space(ctx);
@@ -81,7 +81,7 @@ void top_level_task(const Task *task,
   {
     FieldAllocator allocator = 
       runtime->create_field_allocator(ctx, output_fs);
-    allocator.allocate_field(sizeof(daxpy_t),FID_Z);
+    allocator.allocate_field(sizeof(double),FID_Z);
     runtime->attach_name(output_fs, FID_Z, "Z");
   }
   LogicalRegion input_lr = runtime->create_logical_region(ctx, is, input_fs);
@@ -115,16 +115,16 @@ void top_level_task(const Task *task,
   PhysicalRegion z_pr = runtime->attach_fortran_array(ctx, output_lr, output_lr, field_pointer_map_z,
                                                              LEGION_FILE_READ_WRITE);*/
   
-  std::map<FieldID, size_t> offset;
-  offset[FID_X] = 0;
-  offset[FID_Y] = sizeof(double);
-  offset[FID_Z] = 2*sizeof(double);
-  std::map<FieldID, LogicalRegion> lr;
-  lr[FID_X] = input_lr;
-  lr[FID_Y] = input_lr;
-  lr[FID_Z] = output_lr;
-  std::vector<PhysicalRegion> pr;
-  pr = runtime->attach_fortran_array_aos(ctx, lr, lr, data_ptr, offset);
+  std::map<FieldID, size_t> offset_input;
+  offset_input[FID_X] = 0;
+  offset_input[FID_Y] = sizeof(double);
+
+  PhysicalRegion pr_input = runtime->attach_fortran_array_aos(ctx, input_lr, input_lr, data_ptr, sizeof(daxpy_t), offset_input);
+  
+  std::map<FieldID, size_t> offset_output;
+  offset_output[FID_Z] = 2*sizeof(double);
+  
+  PhysicalRegion pr_output = runtime->attach_fortran_array_aos(ctx, output_lr, output_lr, data_ptr, sizeof(daxpy_t), offset_output);
   
   // In addition to using rectangles and domains for launching index spaces
   // of tasks (see example 02), Legion also uses them for performing 

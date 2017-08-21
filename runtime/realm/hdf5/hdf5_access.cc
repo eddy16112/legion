@@ -171,7 +171,7 @@ namespace Realm {
 							  const ZIndexSpace<N,T>& space,
 							  const std::vector<size_t> &field_sizes,
                 const std::vector<void*> &field_pointers,
-							  size_t block_size,
+							  size_t block_size, unsigned char* aos_base_ptr, size_t aos_stride,
 							  const ProfilingRequestSet& reqs,
 							  Event wait_on /*= Event::NO_EVENT*/)
   {
@@ -208,11 +208,15 @@ namespace Realm {
     size_t field_ofs = 0;
     LocalCPUMemory *m_impl = (LocalCPUMemory *)get_runtime()->get_memory_impl(memory);
     unsigned char* base = (unsigned char*)m_impl->base;
-    unsigned char* ptr = NULL;
+    unsigned char* ptr = aos_base_ptr;
     for(size_t i = 0; i < field_sizes.size(); i++) {
       InstanceLayoutGeneric::FieldLayout& fl = layout->fields[field_ofs];
       fl.list_idx = i;
-      fl.rel_offset = 0;
+      if (i > 0) {
+        fl.rel_offset = (size_t)(((unsigned char*)field_pointers[i]) - ((unsigned char*)field_pointers[i-1]));
+      } else {
+        fl.rel_offset = (size_t)(((unsigned char*)field_pointers[i]) - ptr);
+      }
       fl.size_in_bytes = field_sizes[i];
       field_ofs += field_sizes[i];
 
@@ -220,12 +224,10 @@ namespace Realm {
       if(!space.empty()) {
 	      AffineLayoutPiece<N,T> *alp = new AffineLayoutPiece<N,T>;
 	      alp->bounds = space.bounds;
-        ptr = (unsigned char*)field_pointers[i];
 	      alp->offset = (size_t)(ptr - base);
-	      size_t stride = field_sizes[i];
 	      for(int j = 0; j < N; j++) {
-	        alp->strides[j] = stride;
-	        stride *= (space.bounds.hi[j] - space.bounds.lo[j] + 1);
+	        alp->strides[j] = aos_stride;
+	       // stride *= (space.bounds.hi[j] - space.bounds.lo[j] + 1);
 	      }
 	      layout->piece_lists[i].pieces.push_back(alp);
       }
@@ -243,7 +245,7 @@ namespace Realm {
 							      const ZIndexSpace<N,T>&, \
 							      const std::vector<size_t>&, \
 							      const std::vector<void *>&, \
-							      size_t, \
+							      size_t, unsigned char*, size_t, \
 							      const ProfilingRequestSet&, \
 							      Event);
   FOREACH_NT(DOIT_ARRAY_AOS)  
