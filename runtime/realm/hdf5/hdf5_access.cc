@@ -102,21 +102,7 @@ namespace Realm {
     // smoosh hybrid block sizes back to SOA for now
     if(block_size > 1)
       block_size = 0;
-#if 0
-    InstanceLayoutConstraints ilc(field_sizes, block_size);
-    InstanceLayoutGeneric *layout = InstanceLayoutGeneric::choose_instance_layout(space, ilc);
-    //InstanceLayout<N,T> *layout = new InstanceLayout<N,T>;
-    layout->bytes_used = 0;
-    layout->alignment_reqd = 0;  // no allocation being made
-  //  layout->space = space;
-//    layout->piece_lists.resize(field_sizes.size());
-    Event e = create_instance(inst, memory, layout, reqs, wait_on);
-    RegionInstanceImpl *inst_impl = get_runtime()->get_instance_impl(inst);
-    LocalCPUMemory *m_impl = (LocalCPUMemory *)get_runtime()->get_memory_impl(memory);
-    unsigned char* ptr = (unsigned char*)field_pointers[0];
-    unsigned char* base = (unsigned char*)m_impl->base;
-    inst_impl->metadata.inst_offset = ptr - base;
-#else
+
     InstanceLayout<N,T> *layout = new InstanceLayout<N,T>;
     layout->bytes_used = 0;
     layout->alignment_reqd = 0;  // no allocation being made
@@ -152,7 +138,6 @@ namespace Realm {
     Event e = create_instance(inst, memory, layout, reqs, wait_on);
     RegionInstanceImpl *inst_impl = get_runtime()->get_instance_impl(inst);
     printf("inst offset %lu\n", inst_impl->metadata.inst_offset);
-#endif
     return e;
   }
 
@@ -184,21 +169,7 @@ namespace Realm {
     // smoosh hybrid block sizes back to SOA for now
     if(block_size > 1)
       block_size = 0;
-#if 0
-    InstanceLayoutConstraints ilc(field_sizes, block_size);
-    InstanceLayoutGeneric *layout = InstanceLayoutGeneric::choose_instance_layout(space, ilc);
-    //InstanceLayout<N,T> *layout = new InstanceLayout<N,T>;
-    layout->bytes_used = 0;
-    layout->alignment_reqd = 0;  // no allocation being made
-  //  layout->space = space;
-//    layout->piece_lists.resize(field_sizes.size());
-    Event e = create_instance(inst, memory, layout, reqs, wait_on);
-    RegionInstanceImpl *inst_impl = get_runtime()->get_instance_impl(inst);
-    LocalCPUMemory *m_impl = (LocalCPUMemory *)get_runtime()->get_memory_impl(memory);
-    unsigned char* ptr = (unsigned char*)field_pointers[0];
-    unsigned char* base = (unsigned char*)m_impl->base;
-    inst_impl->metadata.inst_offset = ptr - base;
-#else
+
     InstanceLayout<N,T> *layout = new InstanceLayout<N,T>;
     layout->bytes_used = 0;
     layout->alignment_reqd = 0;  // no allocation being made
@@ -208,14 +179,13 @@ namespace Realm {
     size_t field_ofs = 0;
     LocalCPUMemory *m_impl = (LocalCPUMemory *)get_runtime()->get_memory_impl(memory);
     unsigned char* base = (unsigned char*)m_impl->base;
-    unsigned char* ptr = aos_base_ptr;
     for(size_t i = 0; i < field_sizes.size(); i++) {
       InstanceLayoutGeneric::FieldLayout& fl = layout->fields[field_ofs];
       fl.list_idx = i;
       if (i > 0) {
         fl.rel_offset = (size_t)(((unsigned char*)field_pointers[i]) - ((unsigned char*)field_pointers[i-1]));
       } else {
-        fl.rel_offset = (size_t)(((unsigned char*)field_pointers[i]) - ptr);
+        fl.rel_offset = (size_t)(((unsigned char*)field_pointers[i]) - aos_base_ptr);
       }
       fl.size_in_bytes = field_sizes[i];
       field_ofs += field_sizes[i];
@@ -224,7 +194,7 @@ namespace Realm {
       if(!space.empty()) {
 	      AffineLayoutPiece<N,T> *alp = new AffineLayoutPiece<N,T>;
 	      alp->bounds = space.bounds;
-	      alp->offset = (size_t)(ptr - base);
+	      alp->offset = (size_t)(aos_base_ptr - base);
 	      for(int j = 0; j < N; j++) {
 	        alp->strides[j] = aos_stride;
 	       // stride *= (space.bounds.hi[j] - space.bounds.lo[j] + 1);
@@ -236,7 +206,6 @@ namespace Realm {
     Event e = create_instance(inst, memory, layout, reqs, wait_on);
     RegionInstanceImpl *inst_impl = get_runtime()->get_instance_impl(inst);
     printf("inst offset %lu\n", inst_impl->metadata.inst_offset);
-#endif
     return e;
   }
 
