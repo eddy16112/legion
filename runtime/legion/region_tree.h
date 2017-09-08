@@ -930,6 +930,7 @@ namespace Legion {
                                    const std::vector<const char*> &field_files,
                                    bool read_only) = 0;
       virtual PhysicalInstance create_array_instance(ExternalResource resource,
+                                   const std::vector<Realm::FieldID> &field_ids,
                                    const std::vector<size_t> &field_sizes,
                                    const std::vector<void*> &field_pointers,
                                    int layout_flag, unsigned char* aos_base_ptr, size_t aos_stride) = 0;
@@ -1154,6 +1155,7 @@ namespace Legion {
                                    const std::vector<const char*> &field_files,
                                    bool read_only);
       virtual PhysicalInstance create_array_instance(ExternalResource resource,
+                                   const std::vector<Realm::FieldID> &field_ids,
                                    const std::vector<size_t> &field_sizes,
                                    const std::vector<void*> &field_pointers,
                                    int layout_flag, unsigned char* aos_base_ptr, size_t aos_stride);

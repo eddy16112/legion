@@ -2773,6 +2773,7 @@ namespace Legion {
     template<int DIM, typename T>
     PhysicalInstance IndexSpaceNodeT<DIM,T>::create_array_instance(
                                     ExternalResource resource,
+                                    const std::vector<Realm::FieldID> &field_ids,
                                     const std::vector<size_t> &field_sizes,
                                     const std::vector<void*> &field_pointers,
                                     int layout_flag, unsigned char* aos_base_ptr, size_t aos_stride)
@@ -2788,6 +2789,7 @@ namespace Legion {
       if (layout_flag == 0) {  // SOA
         LgEvent ready(PhysicalInstance::create_array_instance_SOA(result, 
 				           local_space,
+                   field_ids,
 							     field_sizes,
 							     field_pointers,
 							     0,
@@ -2796,6 +2798,7 @@ namespace Legion {
       } else {  // AOS
         LgEvent ready(PhysicalInstance::create_array_instance_AOS(result, 
 				           local_space,
+                   field_ids,
 							     field_sizes,
 							     field_pointers,
 							     0, aos_base_ptr, aos_stride,
