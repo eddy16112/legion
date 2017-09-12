@@ -153,7 +153,7 @@ namespace Realm {
               const std::vector<FieldID> &field_ids,
 				      const std::vector<size_t> &field_sizes,
 				      const std::vector<void*> &field_pointers,
-				      size_t block_size,
+				      int resource,
 				      const ProfilingRequestSet& prs,
 				      Event wait_on = Event::NO_EVENT);
               
@@ -163,7 +163,8 @@ namespace Realm {
               const std::vector<FieldID> &field_ids,
 				      const std::vector<size_t> &field_sizes,
 				      const std::vector<void*> &field_pointers,
-				      size_t block_size, unsigned char* aos_base_ptr, size_t aos_stride,
+				      unsigned char* aos_base_ptr, size_t aos_stride,
+              int resource,
 				      const ProfilingRequestSet& prs,
 				      Event wait_on = Event::NO_EVENT);
 

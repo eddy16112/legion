@@ -286,7 +286,9 @@ void top_level_task(const Task *task,
   check_launcher.region_requirements[1].add_field(FID_Z);
   Future fu = runtime->execute_task(ctx, check_launcher);
   fu.wait();
-
+  
+  runtime->detach_fortran_array(ctx, x_pr);
+  runtime->detach_fortran_array(ctx, z_pr);
   runtime->destroy_logical_region(ctx, input_lr);
   runtime->destroy_logical_region(ctx, output_lr);
   runtime->destroy_field_space(ctx, input_fs);
