@@ -413,7 +413,7 @@ LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/runtime_impl.cc \
 		   $(LG_RT_DIR)/realm/sampling_impl.cc \
                    $(LG_RT_DIR)/lowlevel.cc \
                    $(LG_RT_DIR)/realm/transfer/lowlevel_disk.cc \
-									 $(LG_RT_DIR)/realm/attach_array.cc
+		   $(LG_RT_DIR)/realm/attach_array.cc
 LOW_RUNTIME_SRC += $(LG_RT_DIR)/realm/numa/numa_module.cc \
 		   $(LG_RT_DIR)/realm/numa/numasysif.cc
 ifeq ($(strip $(USE_OPENMP)),1)
