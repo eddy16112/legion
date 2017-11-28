@@ -1373,6 +1373,7 @@ namespace Legion {
       inline void set_predicate_false_result(TaskArgument arg);
     public:
       inline void set_independent_requirements(bool independent);
+      inline void set_recursiveable(bool recursive);
     public:
       Processor::TaskFuncID              task_id;
       std::vector<IndexSpaceRequirement> index_requirements;
@@ -1416,6 +1417,8 @@ namespace Legion {
       bool                               independent_requirements;
     public:
       bool                               silence_warnings;
+    public:
+      bool                               recursiveable;
     };
 
     /**
@@ -1463,6 +1466,7 @@ namespace Legion {
       inline void set_predicate_false_result(TaskArgument arg);
     public:
       inline void set_independent_requirements(bool independent);
+      inline void set_recursiveable(bool recursive);
     public:
       Processor::TaskFuncID              task_id;
       Domain                             launch_domain;
@@ -1509,6 +1513,8 @@ namespace Legion {
       bool                               independent_requirements;
     public:
       bool                               silence_warnings;
+    public:
+      bool                               recursiveable;
     };
 
     /**

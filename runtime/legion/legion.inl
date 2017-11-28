@@ -3044,6 +3044,13 @@ namespace Legion {
     {
       independent_requirements = independent;
     }
+    
+    //--------------------------------------------------------------------------
+    inline void TaskLauncher::set_recursiveable(bool recursive)
+    //--------------------------------------------------------------------------
+    {
+      recursiveable = recursive;
+    }
 
     //--------------------------------------------------------------------------
     inline IndexSpaceRequirement& IndexTaskLauncher::add_index_requirement(
@@ -3139,6 +3146,13 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       independent_requirements = independent;
+    }
+    
+    //--------------------------------------------------------------------------
+    inline void IndexTaskLauncher::set_recursiveable(bool recursive)
+    //--------------------------------------------------------------------------
+    {
+      recursiveable = recursive;
     }
 
     //--------------------------------------------------------------------------
