@@ -1105,6 +1105,7 @@ void top_level_task(const Task *task,
       RegionRequirement(output_lp, 0/*projection ID*/,
                         WRITE_DISCARD, EXCLUSIVE, output_lr));
   daxpy_launcher.add_field(1, FID_Z);
+  daxpy_launcher.set_recursiveable(true);
   runtime->execute_index_space(ctx, daxpy_launcher);
                     
   TaskLauncher check_launcher(CHECK_TASK_ID, TaskArgument(&alpha, sizeof(alpha)));

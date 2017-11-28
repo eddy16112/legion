@@ -2583,6 +2583,8 @@ namespace Legion {
     public:
       // Parent task (only guaranteed to be good for one recursion)
       Task*                               parent_task;
+    public:
+      bool                                recursiveable;
     };
 
     /**

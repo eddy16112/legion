@@ -1788,6 +1788,7 @@ namespace Legion {
       this->wait_barriers = rhs->wait_barriers;
       this->arrive_barriers = rhs->arrive_barriers;
       this->arglen = rhs->arglen;
+      this->recursiveable = rhs->recursiveable;
       if (rhs->arg_manager != NULL)
       {
         if (duplicate_args)
@@ -4611,6 +4612,7 @@ namespace Legion {
       indexes = launcher.index_requirements;
       regions = launcher.region_requirements;
       futures = launcher.futures;
+      recursiveable = launcher.recursiveable;
       // Can't update these here in case we get restricted postconditions
       grants = launcher.grants;
       wait_barriers = launcher.wait_barriers;

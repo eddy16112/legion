@@ -458,7 +458,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     Task::Task(void)
       : Mappable(), args(NULL), arglen(0), local_args(NULL), local_arglen(0),
-        parent_task(NULL)
+        parent_task(NULL), recursiveable(false)
     //--------------------------------------------------------------------------
     {
     }
