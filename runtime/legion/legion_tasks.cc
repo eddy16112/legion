@@ -6481,6 +6481,7 @@ namespace Legion {
       indexes = launcher.index_requirements;
       regions = launcher.region_requirements;
       futures = launcher.futures;
+      recursiveable = launcher.recursiveable;
       update_grants(launcher.grants);
       wait_barriers = launcher.wait_barriers;
       update_arrival_barriers(launcher.arrive_barriers);
@@ -6555,6 +6556,7 @@ namespace Legion {
       indexes = launcher.index_requirements;
       regions = launcher.region_requirements;
       futures = launcher.futures;
+      recursiveable = launcher.recursiveable;
       update_grants(launcher.grants);
       wait_barriers = launcher.wait_barriers;
       update_arrival_barriers(launcher.arrive_barriers);

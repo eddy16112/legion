@@ -594,6 +594,9 @@ void AdversarialMapper::map_task(const MapperContext         ctx,
       variants.push_back(it->first);
   }
   assert(!variants.empty());
+  if (task.recursiveable) {
+    printf("!!!TASK recuraiveable\n");
+  }
   if (variants.size() > 1)
   {
     int chosen_v = 0;
