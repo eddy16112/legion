@@ -3051,6 +3051,13 @@ namespace Legion {
     {
       recursiveable = recursive;
     }
+    
+    //--------------------------------------------------------------------------
+    inline void TaskLauncher::set_is_recursive_task(bool is_recursive)
+    //--------------------------------------------------------------------------
+    {
+      is_recursive_task = is_recursive;
+    }
 
     //--------------------------------------------------------------------------
     inline IndexSpaceRequirement& IndexTaskLauncher::add_index_requirement(
@@ -3153,6 +3160,13 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       recursiveable = recursive;
+    }
+    
+    //--------------------------------------------------------------------------
+    inline void IndexTaskLauncher::set_is_recursive_task(bool is_recursive)
+    //--------------------------------------------------------------------------
+    {
+      is_recursive_task = is_recursive;
     }
 
     //--------------------------------------------------------------------------

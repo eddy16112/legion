@@ -576,7 +576,6 @@ void AdversarialMapper::map_random_requirement(MapperContext ctx,
 // in a random order as the target set of memories, thereby
 // challenging the Legion runtime to maintain correctness
 // of data moved through random sets of memories.
-int splitable = 1;
 void AdversarialMapper::map_task(const MapperContext         ctx,
                                  const Task&                 task,
                                  const MapTaskInput&         input,
@@ -601,16 +600,13 @@ void AdversarialMapper::map_task(const MapperContext         ctx,
   {
     int chosen_v = 0;
     printf("number of variants %d\n", variants.size());
-    if (task.task_id == 2) {
-      const int point = task.index_point.point_data[0];
-      if (point == 2 && splitable) {
-        chosen_v = 1;
-        splitable = 0;
-      } else {
-        chosen_v = 0;
-      }
-      output.chosen_variant = variants[chosen_v];
+    const int point = task.index_point.point_data[0];
+    if (point == 2 && task.recursiveable) {
+      chosen_v = 1;
+    } else {
+      chosen_v = 0;
     }
+    output.chosen_variant = variants[chosen_v];
     
   }
   else
@@ -1167,9 +1163,14 @@ void daxpy_task(const Task *task,
   Rect<1> rect = runtime->get_index_space_domain(ctx,
   task->regions[0].region.get_index_space());
   int size = rect.hi.x - rect.lo.x + 1;
+  
+  int is_recursive_task = 0;
+  if (task->is_recursive_task) {
+    is_recursive_task = 1;
+  }
 
-  printf("Running daxpy computation with alpha %.8g for point %d size %d...\n", 
-          alpha, point, size);
+  printf("Running daxpy computation with alpha %.8g for point %d size %d, is_recursive_task %d...\n", 
+          alpha, point, size, is_recursive_task);
 
   for (PointInRectIterator<1> pir(rect); pir(); pir++)
     acc_z[*pir] = alpha * acc_x[*pir] + acc_y[*pir];
@@ -1217,6 +1218,7 @@ void daxpy_task_split(const Task *task,
       RegionRequirement(output_lp, 0/*projection ID*/,
                         WRITE_DISCARD, EXCLUSIVE, output_lr));
   daxpy_launcher.region_requirements[1].add_field(FID_Z);
+  daxpy_launcher.set_is_recursive_task(true);
   runtime->execute_index_space(ctx, daxpy_launcher);
 }
 

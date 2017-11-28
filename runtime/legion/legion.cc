@@ -458,7 +458,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     Task::Task(void)
       : Mappable(), args(NULL), arglen(0), local_args(NULL), local_arglen(0),
-        parent_task(NULL), recursiveable(false)
+        parent_task(NULL), recursiveable(false), is_recursive_task(false)
     //--------------------------------------------------------------------------
     {
     }
@@ -1680,7 +1680,7 @@ namespace Legion {
       : task_id(0), argument(TaskArgument()), predicate(Predicate::TRUE_PRED),
         map_id(0), tag(0), point(DomainPoint()), static_dependences(NULL),
         enable_inlining(false), independent_requirements(false), 
-        silence_warnings(false), recursiveable(false)
+        silence_warnings(false), recursiveable(false), is_recursive_task(false)
     //--------------------------------------------------------------------------
     {
     }
@@ -1691,7 +1691,8 @@ namespace Legion {
                                MapperID mid /*=0*/, MappingTagID t /*=0*/)
       : task_id(tid), argument(arg), predicate(pred), map_id(mid), tag(t), 
         point(DomainPoint()), static_dependences(NULL), enable_inlining(false),
-        independent_requirements(false), silence_warnings(false), recursiveable(false)
+        independent_requirements(false), silence_warnings(false), 
+        recursiveable(false), is_recursive_task(false)
     //--------------------------------------------------------------------------
     {
     }
@@ -1707,7 +1708,7 @@ namespace Legion {
         argument_map(ArgumentMap()), predicate(Predicate::TRUE_PRED), 
         must_parallelism(false), map_id(0), tag(0), static_dependences(NULL), 
         enable_inlining(false), independent_requirements(false), 
-        silence_warnings(false), recursiveable(false)
+        silence_warnings(false), recursiveable(false), is_recursive_task(false)
     //--------------------------------------------------------------------------
     {
     }
@@ -1723,7 +1724,7 @@ namespace Legion {
         global_arg(global), argument_map(map), predicate(pred), 
         must_parallelism(must), map_id(mid), tag(t), static_dependences(NULL),
         enable_inlining(false), independent_requirements(false), 
-        silence_warnings(false), recursiveable(false)
+        silence_warnings(false), recursiveable(false), is_recursive_task(false)
     //--------------------------------------------------------------------------
     {
     }
@@ -1740,7 +1741,7 @@ namespace Legion {
         global_arg(global), argument_map(map), predicate(pred), 
         must_parallelism(must), map_id(mid), tag(t), static_dependences(NULL),
         enable_inlining(false), independent_requirements(false), 
-        silence_warnings(false), recursiveable(false)
+        silence_warnings(false), recursiveable(false), is_recursive_task(false)
     //--------------------------------------------------------------------------
     {
     }

@@ -1373,7 +1373,9 @@ namespace Legion {
       inline void set_predicate_false_result(TaskArgument arg);
     public:
       inline void set_independent_requirements(bool independent);
+    public:
       inline void set_recursiveable(bool recursive);
+      inline void set_is_recursive_task(bool is_recursive);
     public:
       Processor::TaskFuncID              task_id;
       std::vector<IndexSpaceRequirement> index_requirements;
@@ -1419,6 +1421,7 @@ namespace Legion {
       bool                               silence_warnings;
     public:
       bool                               recursiveable;
+      bool                               is_recursive_task;
     };
 
     /**
@@ -1466,7 +1469,9 @@ namespace Legion {
       inline void set_predicate_false_result(TaskArgument arg);
     public:
       inline void set_independent_requirements(bool independent);
+    public:
       inline void set_recursiveable(bool recursive);
+      inline void set_is_recursive_task(bool is_recursive);
     public:
       Processor::TaskFuncID              task_id;
       Domain                             launch_domain;
@@ -1515,6 +1520,7 @@ namespace Legion {
       bool                               silence_warnings;
     public:
       bool                               recursiveable;
+      bool                               is_recursive_task;
     };
 
     /**
@@ -2584,7 +2590,9 @@ namespace Legion {
       // Parent task (only guaranteed to be good for one recursion)
       Task*                               parent_task;
     public:
+      // Support for recursive task
       bool                                recursiveable;
+      bool                                is_recursive_task;
     };
 
     /**
