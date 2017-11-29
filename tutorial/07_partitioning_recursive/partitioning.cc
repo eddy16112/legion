@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cassert>
 #include <cstdlib>
+#include <unistd.h>
 #include "legion.h"
 
 #include "test_mapper.h"
@@ -54,6 +55,124 @@ enum {
 enum {
   PARTITIONING_MAPPER_ID = 1,
 };
+
+typedef struct recursive_task_args_s {
+  bool recursiveable;
+  bool is_recursive_task;
+}recursive_task_args_t;
+
+class RecursiveTaskArgument {
+private:
+  recursive_task_args_t recursive_task_args;
+  void*                 args;
+  size_t                arglen;
+public:
+  RecursiveTaskArgument(const void *usr_args, size_t user_arglen, 
+                        bool recursiveable, bool is_recursive_task);
+  ~RecursiveTaskArgument();
+public:
+  static void*  get_usr_args(void* task_args);
+  static size_t get_usr_arglen(size_t task_arglen);
+  static bool   is_task_recursiveable(const Task *task);
+  static bool   is_task_recursive_task(const Task *task);
+  static void   set_task_recursiveable(const Task *task);
+  static void   set_task_is_recursive_task(const Task *task);
+public:
+  void*   get_args(void);
+  size_t  get_arglen(void);
+private:
+  void    pack_task_args(const void *usr_args, size_t user_arglen);            
+};
+
+RecursiveTaskArgument::RecursiveTaskArgument(const void *usr_args, 
+                                             size_t user_arglen, 
+                                             bool recursiveable, 
+                                             bool is_recursive_task)
+{
+  recursive_task_args.recursiveable = recursiveable;
+  recursive_task_args.is_recursive_task = is_recursive_task;
+  pack_task_args(usr_args, user_arglen);
+}
+
+RecursiveTaskArgument::~RecursiveTaskArgument()
+{
+  free(args);
+  args = NULL;
+}
+
+void* RecursiveTaskArgument::get_usr_args(void* task_args)
+{
+  if (task_args == NULL) {
+    return NULL;
+  }
+  unsigned char *ptr = (unsigned char*)task_args;
+  ptr += sizeof(recursive_task_args_t);
+  return ptr;
+}
+
+size_t RecursiveTaskArgument::get_usr_arglen(size_t task_arglen)
+{
+  if (task_arglen == 0) {
+    return 0;
+  }
+  size_t usr_arglen = task_arglen - sizeof(recursive_task_args_t);
+  assert(usr_arglen >= 0);
+  return usr_arglen;
+}
+
+bool RecursiveTaskArgument::is_task_recursiveable(const Task *task)
+{
+  recursive_task_args_t *recursive_args = (recursive_task_args_t*)task->args;
+  if (recursive_args == NULL) {
+    return false;
+  }
+  return recursive_args->recursiveable;
+}
+
+bool RecursiveTaskArgument::is_task_recursive_task(const Task *task)
+{
+  recursive_task_args_t *recursive_args = (recursive_task_args_t*)task->args;
+  if (recursive_args == NULL) {
+    return false;
+  }
+  return recursive_args->is_recursive_task;
+}
+
+void RecursiveTaskArgument::set_task_recursiveable(const Task *task)
+{
+  recursive_task_args_t *recursive_args = (recursive_task_args_t*)task->args;
+  assert(recursive_args != NULL);
+  recursive_args->recursiveable = true;
+}
+
+void RecursiveTaskArgument::set_task_is_recursive_task(const Task *task)
+{
+  recursive_task_args_t *recursive_args = (recursive_task_args_t*)task->args;
+  assert(recursive_args != NULL);
+  recursive_args->is_recursive_task = true;
+}
+
+void* RecursiveTaskArgument::get_args(void)
+{
+  return args;
+}
+
+size_t RecursiveTaskArgument:: get_arglen(void)
+{
+  return arglen;
+}
+
+void RecursiveTaskArgument::pack_task_args(const void *usr_args, 
+                                           size_t usr_arglen)
+{
+  args = (void*)malloc(sizeof(recursive_task_args_t) + usr_arglen);
+  arglen = sizeof(recursive_task_args_t) + usr_arglen;
+  unsigned char *ptr = (unsigned char*)args;
+  memcpy(ptr, &recursive_task_args, sizeof(recursive_task_args_t));
+  ptr += sizeof(recursive_task_args_t);
+  memcpy(ptr, (void*)usr_args, usr_arglen);
+}
+
 
 /*
  * One of the primary goals of Legion is
@@ -593,7 +712,7 @@ void AdversarialMapper::map_task(const MapperContext         ctx,
       variants.push_back(it->first);
   }
   assert(!variants.empty());
-  if (task.recursiveable) {
+  if (RecursiveTaskArgument::is_task_recursiveable(&task)) {
     printf("!!!TASK recuraiveable\n");
   }
   if (variants.size() > 1)
@@ -601,7 +720,8 @@ void AdversarialMapper::map_task(const MapperContext         ctx,
     int chosen_v = 0;
     printf("number of variants %d\n", variants.size());
     const int point = task.index_point.point_data[0];
-    if (point == 2 && task.recursiveable) {
+    if (point == 2 && RecursiveTaskArgument::is_task_recursiveable(&task)) {
+      RecursiveTaskArgument::set_task_is_recursive_task(&task);
       chosen_v = 1;
     } else {
       chosen_v = 0;
@@ -973,11 +1093,20 @@ void AdversarialMapper::report_profiling(const MapperContext      ctx,
     input.profiling_responses.get_measurement<OperationTimeline>();
   if (timeline)
   {
-    printf("Operation timeline for task %s: ready=%lld start=%lld stop=%lld\n",
+    Task *parent_task = task.parent_task;
+    char *parent_task_name = "NULL";
+    if (parent_task != NULL) {
+      parent_task_name = (char*)parent_task->get_task_name();
+    }
+    int is_recursive_task = 0;
+    if (RecursiveTaskArgument::is_task_recursive_task(&task)) {
+      is_recursive_task = 1;
+    }
+    printf("Operation timeline for task %s: ready=%lld start=%lld stop=%lld, parent %s, is_recursive_task %d\n",
 	   task.get_task_name(),
 	   timeline->ready_time,
 	   timeline->start_time,
-	   timeline->end_time);
+	   timeline->end_time, parent_task_name, is_recursive_task);
     delete timeline;
   }
   else
@@ -1093,8 +1222,10 @@ void top_level_task(const Task *task,
   runtime->execute_index_space(ctx, init_launcher);
 
   const double alpha = drand48();
+  RecursiveTaskArgument daxpy_task_args(&alpha, sizeof(double), 1, 0);
+  
   IndexLauncher daxpy_launcher(DAXPY_TASK_ID, color_is,
-                TaskArgument(&alpha, sizeof(alpha)), arg_map);
+                TaskArgument(daxpy_task_args.get_args(), daxpy_task_args.get_arglen()), arg_map);
   daxpy_launcher.add_region_requirement(
       RegionRequirement(input_lp, 0/*projection ID*/,
                         READ_ONLY, EXCLUSIVE, input_lr));
@@ -1104,10 +1235,12 @@ void top_level_task(const Task *task,
       RegionRequirement(output_lp, 0/*projection ID*/,
                         WRITE_DISCARD, EXCLUSIVE, output_lr));
   daxpy_launcher.add_field(1, FID_Z);
-  daxpy_launcher.set_recursiveable(true);
+  //daxpy_launcher.set_recursiveable(true);
   runtime->execute_index_space(ctx, daxpy_launcher);
+  
+  RecursiveTaskArgument check_task_args(&alpha, sizeof(double), 0, 0);
                     
-  TaskLauncher check_launcher(CHECK_TASK_ID, TaskArgument(&alpha, sizeof(alpha)));
+  TaskLauncher check_launcher(CHECK_TASK_ID, TaskArgument(check_task_args.get_args(), check_task_args.get_arglen()));
   check_launcher.add_region_requirement(
       RegionRequirement(input_lr, READ_ONLY, EXCLUSIVE, input_lr));
   check_launcher.region_requirements[0].add_field(FID_X);
@@ -1152,8 +1285,9 @@ void daxpy_task(const Task *task,
 {
   assert(regions.size() == 2);
   assert(task->regions.size() == 2);
-  assert(task->arglen == sizeof(double));
-  const double alpha = *((const double*)task->args);
+  size_t user_arglen = RecursiveTaskArgument::get_usr_arglen(task->arglen);
+  assert(user_arglen == sizeof(double));
+  const double alpha = *((const double*)RecursiveTaskArgument::get_usr_args(task->args));
   const int point = task->index_point.point_data[0];
 
   const FieldAccessor<READ_ONLY,double,1> acc_x(regions[0], FID_X);
@@ -1165,12 +1299,16 @@ void daxpy_task(const Task *task,
   int size = rect.hi.x - rect.lo.x + 1;
   
   int is_recursive_task = 0;
-  if (task->is_recursive_task) {
+  if (RecursiveTaskArgument::is_task_recursive_task(task)) {
     is_recursive_task = 1;
   }
+  
+  char hostname[1024];
+  hostname[1023] = '\0';
+  gethostname(hostname, 1023);
 
-  printf("Running daxpy computation with alpha %.8g for point %d size %d, is_recursive_task %d...\n", 
-          alpha, point, size, is_recursive_task);
+  printf("Running daxpy computation with alpha %.8g for point %d size %d, is_recursive_task %d, host %s...\n", 
+          alpha, point, size, is_recursive_task, hostname);
 
   for (PointInRectIterator<1> pir(rect); pir(); pir++)
     acc_z[*pir] = alpha * acc_x[*pir] + acc_y[*pir];
@@ -1183,16 +1321,21 @@ void daxpy_task_split(const Task *task,
 {
   assert(regions.size() == 2);
   assert(task->regions.size() == 2);
-  assert(task->arglen == sizeof(double));
-  const double alpha = *((const double*)task->args);
+  size_t user_arglen = RecursiveTaskArgument::get_usr_arglen(task->arglen);
+  assert(user_arglen == sizeof(double));
+  const double alpha = *((const double*)RecursiveTaskArgument::get_usr_args(task->args));
   const int point = task->index_point.point_data[0];
 
   Rect<1> rect = runtime->get_index_space_domain(ctx,
   task->regions[0].region.get_index_space());
   int size = rect.hi.x - rect.lo.x + 1;
 
-  printf("Running daxpy split with alpha %.8g for point %d size %d...\n", 
-          alpha, point, size);
+  char hostname[1024];
+  hostname[1023] = '\0';
+  gethostname(hostname, 1023);
+  
+  printf("Running daxpy split with alpha %.8g for point %d size %d, hostname %s...\n", 
+          alpha, point, size, hostname);
   Rect<1> color_bounds(0, 3);
   IndexSpace is = task->regions[0].region.get_index_space();
   IndexSpace color_is = runtime->create_index_space(ctx, color_bounds);
@@ -1207,8 +1350,10 @@ void daxpy_task_split(const Task *task,
   runtime->attach_name(output_lp, "output_lp");
 
   ArgumentMap arg_map;
+  RecursiveTaskArgument task_args(&alpha, sizeof(double), 0, 1);
+  
   IndexLauncher daxpy_launcher(DAXPY_TASK_ID, color_is,
-                TaskArgument(&alpha, sizeof(alpha)), arg_map);
+                TaskArgument(task_args.get_args(), task_args.get_arglen()), arg_map);
   daxpy_launcher.add_region_requirement(
       RegionRequirement(input_lp, 0/*projection ID*/,
                         READ_ONLY, EXCLUSIVE, input_lr));
@@ -1218,7 +1363,7 @@ void daxpy_task_split(const Task *task,
       RegionRequirement(output_lp, 0/*projection ID*/,
                         WRITE_DISCARD, EXCLUSIVE, output_lr));
   daxpy_launcher.region_requirements[1].add_field(FID_Z);
-  daxpy_launcher.set_is_recursive_task(true);
+  //daxpy_launcher.set_is_recursive_task(true);
   runtime->execute_index_space(ctx, daxpy_launcher);
 }
 
@@ -1228,8 +1373,9 @@ void check_task(const Task *task,
 {
   assert(regions.size() == 2);
   assert(task->regions.size() == 2);
-  assert(task->arglen == sizeof(double));
-  const double alpha = *((const double*)task->args);
+  size_t user_arglen = RecursiveTaskArgument::get_usr_arglen(task->arglen);
+  assert(user_arglen == sizeof(double));
+  const double alpha = *((const double*)RecursiveTaskArgument::get_usr_args(task->args));
 
   const FieldAccessor<READ_ONLY,double,1> acc_x(regions[0], FID_X);
   const FieldAccessor<READ_ONLY,double,1> acc_y(regions[0], FID_Y);
@@ -1257,6 +1403,11 @@ void check_task(const Task *task,
 
 int main(int argc, char **argv)
 {
+  char hostname[1024];
+  hostname[1023] = '\0';
+  gethostname(hostname, 1023);
+  printf("My process ID : %d, host %s\n", getpid(), hostname);
+  sleep(10);
   Runtime::set_top_level_task_id(TOP_LEVEL_TASK_ID);
 
   {
