@@ -38,7 +38,7 @@ $(error LG_RT_DIR variable is not defined, aborting build)
 endif
 
 # defaults for GASNet
-CONDUIT ?= udp
+CONDUIT ?= ibv
 ifdef GASNET_ROOT
 GASNET ?= $(GASNET_ROOT)
 endif
