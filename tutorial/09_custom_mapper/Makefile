@@ -22,7 +22,7 @@ endif
 DEBUG           := 1		# Include debugging symbols
 OUTPUT_LEVEL    ?= LEVEL_DEBUG	# Compile time logging level
 USE_CUDA        ?= 0		# Include CUDA support (requires CUDA)
-USE_GASNET      ?= 0		# Include GASNet support (requires GASNet)
+USE_GASNET      ?= 1		# Include GASNet support (requires GASNet)
 USE_HDF         ?= 0		# Include HDF5 support (requires HDF5)
 ALT_MAPPERS     ?= 0		# Include alternative mappers (not recommended)
 
@@ -37,7 +37,7 @@ INC_FLAGS	?=
 CC_FLAGS	?=
 NVCC_FLAGS	?=
 GASNET_FLAGS	?=
-LD_FLAGS	?=
+LD_FLAGS	?= -lpmi2
 
 ###########################################################################
 #
