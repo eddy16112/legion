@@ -185,8 +185,6 @@ void mapper_registration(Machine machine, Runtime *rt,
   {
     rt->replace_default_mapper(
         new AdversarialMapper(machine, rt, *it), *it);
-    rt->add_mapper(PARTITIONING_MAPPER_ID,
-        new PartitioningMapper(machine, rt, *it), *it);
   }
 }
 
@@ -742,9 +740,9 @@ void top_level_task(const Task *task,
         num_elements = atoi(command_args.argv[++i]);
     }
   }
-  int num_subregions =
-    runtime->select_tunable_value(ctx, SUBREGION_TUNABLE,
-                                  PARTITIONING_MAPPER_ID).get_result<size_t>();
+  int num_subregions = 4;
+    //runtime->select_tunable_value(ctx, SUBREGION_TUNABLE,
+      //                            PARTITIONING_MAPPER_ID).get_result<size_t>();
 
   printf("Running daxpy for %d elements...\n", num_elements);
   printf("Partitioning data into %d sub-regions...\n", num_subregions);
@@ -791,6 +789,8 @@ void top_level_task(const Task *task,
   runtime->execute_index_space(ctx, init_launcher);
 
   const double alpha = drand48();
+  
+  for (int ct = 0; ct < 5; ct++) {
   IndexLauncher daxpy_launcher(DAXPY_TASK_ID, color_is,
                 TaskArgument(&alpha, sizeof(alpha)), arg_map);
   daxpy_launcher.add_region_requirement(
@@ -803,7 +803,8 @@ void top_level_task(const Task *task,
                         WRITE_DISCARD, EXCLUSIVE, output_lr));
   daxpy_launcher.add_field(1, FID_Z);
   runtime->execute_index_space(ctx, daxpy_launcher);
-                    
+  }                    
+
   TaskLauncher check_launcher(CHECK_TASK_ID, TaskArgument(&alpha, sizeof(alpha)));
   check_launcher.add_region_requirement(
       RegionRequirement(input_lr, READ_ONLY, EXCLUSIVE, input_lr));
