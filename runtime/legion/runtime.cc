@@ -3072,7 +3072,9 @@ namespace Legion {
                           "when returning from a call to 'select_tasks_to_map' "
                           "that performed no other actions. Specifying a "
                           "MapperEvent in such situation is necessary to avoid "
-                          "livelock conditions.", mapper->get_mapper_name())
+                          "livelock conditions. Please return a "
+                          "'deferral_event' in the 'output' struct.",
+                          mapper->get_mapper_name())
           // Launch a task to remove the deferred mapper event when it triggers
           DeferMapperSchedulerArgs args;
           args.proxy_this = this;
@@ -9427,6 +9429,11 @@ namespace Legion {
       layout_constraints_lock = Reservation::NO_RESERVATION;
       memory_manager_lock.destroy_reservation();
       memory_manager_lock = Reservation::NO_RESERVATION; 
+      for (std::map<Memory,MemoryManager*>::const_iterator it =
+            memory_managers.begin(); it != memory_managers.end(); it++)
+      {
+        delete it->second;
+      }
       memory_managers.clear();
       projection_lock.destroy_reservation();
       projection_lock = Reservation::NO_RESERVATION;
@@ -9533,8 +9540,27 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       LG_TASK_DESCRIPTIONS(lg_task_descriptions);
-      profiler = new LegionProfiler((local_utils.empty() ?
-                                     Processor::NO_PROC : utility_group),
+      // Check to see if we have any I/O processors, if we do then we'll do
+      // all our output on the I/O processors since we'll be writing to files 
+      // Otherwise we'll use our utility group, lacking even that then
+      // we'll just do it on whatever the executing processor is
+      Machine::ProcessorQuery local_io_procs(machine);
+      local_io_procs.local_address_space();
+      local_io_procs.only_kind(Processor::IO_PROC);
+      Processor target_proc_for_profiler = Processor::NO_PROC;
+      if (local_io_procs.count() > 1)
+      {
+        std::vector<Processor> io_procs;
+        for (Machine::ProcessorQuery::iterator it = local_io_procs.begin();
+              it != local_io_procs.end(); it++)
+          io_procs.push_back(*it);
+        target_proc_for_profiler = Processor::create_group(io_procs);
+      }
+      else if (local_io_procs.count() == 1)
+        target_proc_for_profiler = local_io_procs.first();
+      else if (!local_utils.empty())
+        target_proc_for_profiler = utility_group;
+      profiler = new LegionProfiler(target_proc_for_profiler,
                                     machine, this, LG_LAST_TASK_ID,
                                     lg_task_descriptions,
                                     Operation::LAST_OP_KIND,
@@ -13608,11 +13634,9 @@ namespace Legion {
                                                         Serializer &rez)
     //--------------------------------------------------------------------------
     {
-      // This can't go on the context virtual channel due to the possiblility
-      // of deadlock in the case where we need to page in the result context
       find_messenger(target)->send_message(rez,
           SEND_REMOTE_CONTEXT_PHYSICAL_RESPONSE,
-          DEFAULT_VIRTUAL_CHANNEL, true/*flush*/, true/*response*/);
+          CONTEXT_VIRTUAL_CHANNEL, true/*flush*/, true/*response*/);
     }
 
     //--------------------------------------------------------------------------
@@ -15295,6 +15319,9 @@ namespace Legion {
     void Runtime::free_distributed_id(DistributedID did)
     //--------------------------------------------------------------------------
     {
+      // Special case for did 0 on shutdown
+      if (did == 0)
+        return;
       did &= LEGION_DISTRIBUTED_ID_MASK;
 #ifdef DEBUG_LEGION
       // Should only be getting back our own DIDs
@@ -19518,6 +19545,10 @@ namespace Legion {
                               const void *userdata, size_t userlen, Processor p)
     //--------------------------------------------------------------------------
     {
+      // We can also finalize our virtual instance unless we're running with 
+      // separate runtime instances, in which case we'll just leak it
+      if (!Runtime::separate_runtime_instances)
+        VirtualManager::finalize_virtual_instance();
       // Finalize the runtime and then delete it
       Runtime *runtime = get_runtime(p);
       runtime->finalize_runtime();
@@ -19940,6 +19971,16 @@ namespace Legion {
                           false, false, RtUserEvent::NO_RT_USER_EVENT);
             break;
           }
+        case LG_INDEX_SPACE_DEFER_CHILD_TASK_ID:
+          {
+            IndexSpaceNode::defer_node_child_request(args);
+            break;
+          }
+        case LG_INDEX_PART_DEFER_CHILD_TASK_ID:
+          {
+            IndexPartNode::defer_node_child_request(args);
+            break;
+          }
         case LG_SELECT_TUNABLE_TASK_ID:
           {
             const SelectTunableArgs *tunable_args = 
@@ -20102,11 +20143,14 @@ namespace Legion {
             IndexSpaceNode::handle_tighten_index_space(args);
             break;
           }
-        case LG_PROF_OUTPUT_TASK_ID:
+        case LG_REMOTE_PHYSICAL_REQUEST_TASK_ID:
           {
-            const LegionProfiler::LgOutputTaskArgs *oargs = 
-              (const LegionProfiler::LgOutputTaskArgs*)args;
-            oargs->profiler->perform_intermediate_output();
+            RemoteContext::defer_physical_request(args);
+            break;
+          }
+        case LG_REMOTE_PHYSICAL_RESPONSE_TASK_ID:
+          {
+            RemoteContext::defer_physical_response(args);
             break;
           }
         case LG_RETRY_SHUTDOWN_TASK_ID:

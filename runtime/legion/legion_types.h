@@ -338,6 +338,8 @@ namespace Legion {
       LG_FIELD_SEMANTIC_INFO_REQ_TASK_ID,
       LG_REGION_SEMANTIC_INFO_REQ_TASK_ID,
       LG_PARTITION_SEMANTIC_INFO_REQ_TASK_ID,
+      LG_INDEX_SPACE_DEFER_CHILD_TASK_ID,
+      LG_INDEX_PART_DEFER_CHILD_TASK_ID,
       LG_SELECT_TUNABLE_TASK_ID,
       LG_DEFERRED_ENQUEUE_OP_ID,
       LG_DEFERRED_ENQUEUE_TASK_ID,
@@ -364,7 +366,8 @@ namespace Legion {
       LG_DEFER_PHI_VIEW_REF_TASK_ID,
       LG_DEFER_PHI_VIEW_REGISTRATION_TASK_ID,
       LG_TIGHTEN_INDEX_SPACE_TASK_ID,
-      LG_PROF_OUTPUT_TASK_ID,
+      LG_REMOTE_PHYSICAL_REQUEST_TASK_ID,
+      LG_REMOTE_PHYSICAL_RESPONSE_TASK_ID,
       LG_MESSAGE_ID, // These two must be the last two
       LG_RETRY_SHUTDOWN_TASK_ID,
       LG_LAST_TASK_ID, // This one should always be last
@@ -437,6 +440,8 @@ namespace Legion {
         "Field Semantic Request",                                 \
         "Region Semantic Request",                                \
         "Partition Semantic Request",                             \
+        "Defer Index Space Child Request",                        \
+        "Defer Index Partition Child Request",                    \
         "Select Tunable",                                         \
         "Deferred Enqueue Op",                                    \
         "Deferred Enqueue Task",                                  \
@@ -463,7 +468,8 @@ namespace Legion {
         "Defer Phi View Reference",                               \
         "Defer Phi View Registration",                            \
         "Tighten Index Space",                                    \
-        "Legion Prof Early Output",                               \
+        "Remote Physical Context Request",                        \
+        "Remote Physical Context Response",                       \
         "Remote Message",                                         \
         "Retry Shutdown",                                         \
       };

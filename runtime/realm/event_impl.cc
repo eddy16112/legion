@@ -178,6 +178,9 @@ namespace Realm {
 
     protected:
       const EventTriggeredCondition& cond;
+#ifdef REALM_EVENT_WAITER_BACKTRACE
+      mutable Backtrace backtrace;
+#endif
     };
 
     void add_callback(Callback& cb) const;
@@ -201,6 +204,9 @@ namespace Realm {
   EventTriggeredCondition::Callback::Callback(const EventTriggeredCondition& _cond)
     : cond(_cond)
   {
+#ifdef REALM_EVENT_WAITER_BACKTRACE
+    backtrace.capture_backtrace();
+#endif
   }
   
   EventTriggeredCondition::Callback::~Callback(void)
@@ -218,7 +224,12 @@ namespace Realm {
 
   void EventTriggeredCondition::Callback::print(std::ostream& os) const
   {
+#ifdef REALM_EVENT_WAITER_BACKTRACE
+    backtrace.lookup_symbols();
+    os << "EventTriggeredCondition (backtrace=" << backtrace << ")";
+#else
     os << "EventTriggeredCondition (thread unknown)";
+#endif
   }  
 
   Event EventTriggeredCondition::Callback::get_finish_event(void) const
@@ -1728,6 +1739,14 @@ namespace Realm {
       initial_value = 0;
       value_capacity = 0;
       final_values = 0;
+    }
+
+    BarrierImpl::~BarrierImpl(void)
+    {
+      if(initial_value)
+	free(initial_value);
+      if(final_values)
+	free(final_values);
     }
 
     void BarrierImpl::init(ID _me, unsigned _init_owner)
