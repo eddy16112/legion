@@ -239,8 +239,12 @@ public:
 				const Task&              task,
 				const TaskProfilingInfo& input);
 protected:
-      long generate_random_integer(void) const 
+  long generate_random_integer(void) const 
         { return default_generate_random_integer(); }
+  void default_map_task(const MapperContext ctx,
+                        const Task& task,
+                        const MapTaskInput& input,
+                              MapTaskOutput& output);   
 
 protected:
   std::map<TaskID,std::map<VariantID,
@@ -664,114 +668,12 @@ void AdversarialMapper::map_random_requirement(MapperContext ctx,
 }
 
 //--------------------------------------------------------------------------
-void AdversarialMapper::triggerSelectTasksToMap(const MapperContext ctx)
+void AdversarialMapper::default_map_task(const MapperContext         ctx,
+                                         const Task&                 task,
+                                         const MapTaskInput&         input,
+                                               MapTaskOutput&        output)
 //--------------------------------------------------------------------------
 {
-  if (defer_select_tasks_to_map.exists()){
-    printf("!!!!!!!retrigger select tasks to map ctx %p\n", ctx);
-    MapperEvent temp_event = defer_select_tasks_to_map;
-    defer_select_tasks_to_map = MapperEvent();
-    runtime->trigger_mapper_event(ctx, temp_event);
-  } else {
-//    log_psana_mapper.debug("proc %llx: try to trigger but event not exist",
-  //                         local_proc.id);
-  }
-}
-
-
-void AdversarialMapper::select_tasks_to_map(const MapperContext          ctx,
-                                            const SelectMappingInput&    input,
-                                            SelectMappingOutput&   output)
-{
-  pthread_t         self;
-  self = pthread_self();
-  printf("in my select tasks to map tid %lld, this:%p, ctx:%p\n", self, this, ctx);
-  
-  unsigned count = 0;
-  for (std::list<const Task*>::const_iterator it = 
-        input.ready_tasks.begin(); (count < max_schedule_count) && 
-        (it != input.ready_tasks.end()); it++)
-  {
-    const Task *task = *it; 
-    if (RecursiveTaskArgument::is_task_recursiveable(task)) {
-      if (recursive_tasks_scheduled >= shared_variables->max_recursive_tasks_to_schedule) {
-        printf("~~~~~~~~task find %s, but not schedule, task_scheduled %d\n", task->get_task_name(), recursive_tasks_scheduled);
-        if (!defer_select_tasks_to_map.exists()) {
-          defer_select_tasks_to_map = runtime->create_mapper_event(ctx);
-        }
-        output.deferral_event = defer_select_tasks_to_map;
-        continue;
-      }
-      // TODO: now, use a trick, slice task is sliced into 4 points, so with -ll:cpu 1, set to 4, -ll:cpu 2, set to 2.
-      recursive_tasks_scheduled +=4;
-      printf("!!!!!!!!!task find %s, schedule, task_scheduled %d, target proc %llx\n", task->get_task_name(), recursive_tasks_scheduled, task->target_proc);
-    }
-    output.map_tasks.insert(*it);
-    count++;
-  }
-
-}
-
-void AdversarialMapper::map_task(const MapperContext         ctx,
-                                 const Task&                 task,
-                                 const MapTaskInput&         input,
-                                       MapTaskOutput&        output)
-{
-#if defined (USE_DEFAULT)
-  // Let's ask for some profiling data to see the impact of our choices
-  {
-    using namespace ProfilingMeasurements;
-    output.task_prof_requests.add_measurement<OperationStatus>();
-    output.task_prof_requests.add_measurement<OperationTimeline>();
- //   output.task_prof_requests.add_measurement<RuntimeOverhead>();
-  }
-  DefaultMapper::map_task(ctx, task, input, output); 
-#else
-  // Pick a random variant, then pick separate instances for all the 
-  // fields in a region requirement
-  const std::map<VariantID,Processor::Kind> &variant_kinds = 
-    find_task_variants(ctx, task.task_id);
-  std::vector<VariantID> variants;
-  for (std::map<VariantID,Processor::Kind>::const_iterator it = 
-        variant_kinds.begin(); it != variant_kinds.end(); it++)
-  {
-    if (task.target_proc.kind() == it->second)
-      variants.push_back(it->first);
-  }
-  assert(!variants.empty());
-  if (variants.size() > 1)
-  {
-    printf("in map_task, task %s, mapper ctx %p\n", task.get_task_name(), ctx);
-    bool task_recursiveable = RecursiveTaskArgument::is_task_recursiveable(&task);
-    std::map<TaskID, bool>::iterator it = shared_variables->task_use_recursive.find(task.task_id);
-    // the first time encounter this task
-    if (it == shared_variables->task_use_recursive.end()) {
-      shared_variables->task_use_recursive[task.task_id] = false;
-    } 
- //   task_use_recursive[task.task_id] = false; 
-    int chosen_v = 0;
-    //printf("number of variants %d\n", variants.size());
-    const int point = task.index_point.point_data[0];
-    if (shared_variables->task_use_recursive[task.task_id] && task_recursiveable) {
-      RecursiveTaskArgument::set_task_is_recursive_task(&task);
-      chosen_v = 1;
-    } else {
-      chosen_v = 0;
-    }
-    output.chosen_variant = variants[chosen_v];
-    
-  }
-  else
-    output.chosen_variant = variants[0];
-  
-  // Let's ask for some profiling data to see the impact of our choices
-  {
-    using namespace ProfilingMeasurements;
-    output.task_prof_requests.add_measurement<OperationStatus>();
-    output.task_prof_requests.add_measurement<OperationTimeline>();
- //   output.task_prof_requests.add_measurement<RuntimeOverhead>();
-  }
-  
   output.task_priority = default_policy_select_task_priority(ctx, task);
   output.postmap_task = false;
   // Figure out our target processors
@@ -1020,7 +922,110 @@ void AdversarialMapper::map_task(const MapperContext         ctx,
       }
     }
   }  
-#endif
+}                                         
+
+//--------------------------------------------------------------------------
+void AdversarialMapper::triggerSelectTasksToMap(const MapperContext ctx)
+//--------------------------------------------------------------------------
+{
+  if (defer_select_tasks_to_map.exists()){
+    printf("!!!!!!!retrigger select tasks to map ctx %p\n", ctx);
+    MapperEvent temp_event = defer_select_tasks_to_map;
+    defer_select_tasks_to_map = MapperEvent();
+    runtime->trigger_mapper_event(ctx, temp_event);
+  } else {
+//    log_psana_mapper.debug("proc %llx: try to trigger but event not exist",
+  //                         local_proc.id);
+  }
+}
+
+
+void AdversarialMapper::select_tasks_to_map(const MapperContext          ctx,
+                                            const SelectMappingInput&    input,
+                                            SelectMappingOutput&   output)
+{
+  pthread_t         self;
+  self = pthread_self();
+  printf("in my select tasks to map tid %lld, this:%p, ctx:%p\n", self, this, ctx);
+  
+  unsigned count = 0;
+  for (std::list<const Task*>::const_iterator it = 
+        input.ready_tasks.begin(); (count < max_schedule_count) && 
+        (it != input.ready_tasks.end()); it++)
+  {
+    const Task *task = *it; 
+    if (RecursiveTaskArgument::is_task_recursiveable(task)) {
+      if (recursive_tasks_scheduled >= shared_variables->max_recursive_tasks_to_schedule) {
+        printf("~~~~~~~~task find %s, but not schedule, task_scheduled %d\n", task->get_task_name(), recursive_tasks_scheduled);
+        if (!defer_select_tasks_to_map.exists()) {
+          defer_select_tasks_to_map = runtime->create_mapper_event(ctx);
+        }
+        output.deferral_event = defer_select_tasks_to_map;
+        continue;
+      }
+      // TODO: now, use a trick, slice task is sliced into 4 points, so with -ll:cpu 1, set to 4, -ll:cpu 2, set to 2.
+      recursive_tasks_scheduled +=1;
+      printf("!!!!!!!!!task find %s, schedule, task_scheduled %d, target proc %llx\n", task->get_task_name(), recursive_tasks_scheduled, task->target_proc);
+    }
+    output.map_tasks.insert(*it);
+    count++;
+  }
+
+}
+
+void AdversarialMapper::map_task(const MapperContext         ctx,
+                                 const Task&                 task,
+                                 const MapTaskInput&         input,
+                                       MapTaskOutput&        output)
+{
+  // Pick a variant, then pick separate instances for all the 
+  // fields in a region requirement
+  const std::map<VariantID,Processor::Kind> &variant_kinds = 
+    find_task_variants(ctx, task.task_id);
+  std::vector<VariantID> variants;
+  for (std::map<VariantID,Processor::Kind>::const_iterator it = 
+        variant_kinds.begin(); it != variant_kinds.end(); it++)
+  {
+    if (task.target_proc.kind() == it->second)
+      variants.push_back(it->first);
+  }
+  assert(!variants.empty());
+  if (variants.size() > 1)
+  {
+    printf("in map_task, task %s, mapper ctx %p\n", task.get_task_name(), ctx);
+    bool task_recursiveable = RecursiveTaskArgument::is_task_recursiveable(&task);
+    std::map<TaskID, bool>::iterator it = shared_variables->task_use_recursive.find(task.task_id);
+    // the first time encounter this task
+    if (it == shared_variables->task_use_recursive.end()) {
+      shared_variables->task_use_recursive[task.task_id] = false;
+    } 
+ //   task_use_recursive[task.task_id] = false; 
+    int chosen_v = 0;
+    //printf("number of variants %d\n", variants.size());
+    const int point = task.index_point.point_data[0];
+    if (shared_variables->task_use_recursive[task.task_id] && task_recursiveable) {
+      RecursiveTaskArgument::set_task_is_recursive_task(&task);
+      chosen_v = 1;
+    } else {
+      chosen_v = 0;
+    }
+    output.chosen_variant = variants[chosen_v];
+    
+  }
+  else
+    output.chosen_variant = variants[0];
+  
+  // Let's ask for some profiling data to see the impact of our choices
+  {
+    using namespace ProfilingMeasurements;
+    output.task_prof_requests.add_measurement<OperationStatus>();
+    output.task_prof_requests.add_measurement<OperationTimeline>();
+ //   output.task_prof_requests.add_measurement<RuntimeOverhead>();
+  }
+  default_map_task(ctx, task, input, output); 
+
+  output.target_procs.clear();
+  output.target_procs.push_back(local_proc);
 }
 
 
@@ -1102,7 +1107,7 @@ void AdversarialMapper::report_profiling(const MapperContext      ctx,
         task_profile.duration = timeline->end_time - timeline->start_time;
         shared_variables->task_profiling_history[task.task_id] = task_profile;
       }
-      Task *parent_task = task.parent_task;
+      const Task *parent_task = task.parent_task;
       char *parent_task_name = "NULL";
       if (parent_task != NULL) {
         parent_task_name = (char*)parent_task->get_task_name();
