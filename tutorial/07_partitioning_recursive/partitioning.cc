@@ -57,6 +57,16 @@ enum {
   PARTITIONING_MAPPER_ID = 1,
 };
 
+typedef enum {
+  TASK_STEAL_REQUEST = 1,
+  POOL_POOL_FORWARD_STEAL,
+  POOL_WORKER_STEAL_ACK,
+  POOL_POOL_FORWARD_STEAL_SUCCESS,
+  POOL_WORKER_STEAL_NACK,
+  POOL_WORKER_WAKEUP,
+} MessageType;
+
+
 typedef struct task_profiling_s {
   long long duration;
   bool      is_recursive_task;
@@ -214,6 +224,7 @@ public:
   AdversarialMapper(Machine machine, 
       Runtime *rt, Processor local, RecursiveTaskMapperShared *shared);
 public:
+  Processor select_processor_by_id(Processor::Kind kind, const int id);
   const std::map<VariantID,Processor::Kind>& find_task_variants(
                                             MapperContext ctx, TaskID task_id);
   
@@ -228,6 +239,17 @@ public:
   
   void triggerSelectTasksToMap(const MapperContext ctx);
   
+  virtual void handle_message(const MapperContext ctx,
+                                 const MapperMessage& message);
+  virtual void select_task_options(const MapperContext ctx,
+                                            const Task& task,
+                                                  TaskOptions& output);
+                                 
+  virtual void slice_task(const MapperContext      ctx,
+                                   const Task&              task,
+                                   const SliceTaskInput&    input,
+                                         SliceTaskOutput&   output);
+  
   virtual void select_tasks_to_map(const MapperContext          ctx,
                                    const SelectMappingInput&    input,
                                    SelectMappingOutput&   output);
@@ -235,6 +257,13 @@ public:
                         const Task& task,
                         const MapTaskInput& input,
                               MapTaskOutput& output);
+  virtual void select_steal_targets(const MapperContext         ctx,
+                             const SelectStealingInput&  input,
+                                   SelectStealingOutput& output);
+       
+  virtual void permit_steal_request(const MapperContext         ctx,
+      const StealRequestInput&    input,
+            StealRequestOutput&   output);
   virtual void report_profiling(const MapperContext      ctx,
 				const Task&              task,
 				const TaskProfilingInfo& input);
@@ -253,6 +282,7 @@ private:
   RecursiveTaskMapperShared *shared_variables;
   MapperEvent defer_select_tasks_to_map;
   int recursive_tasks_scheduled;
+  std::set<Processor> task_steal_processor_blacklist;
   
 };
 /*
@@ -341,6 +371,17 @@ AdversarialMapper::AdversarialMapper(Machine m,
   
   std::set<Processor> all_procs;
   machine.get_all_processors(all_procs);
+  
+  for (std::set<Processor>::const_iterator it = all_procs.begin();
+        it != all_procs.end(); it++)
+  {
+    // For every processor there is an associated kind
+    Processor::Kind kind = it->kind();
+    if (kind == Processor::LOC_PROC)
+    {
+      task_steal_processor_blacklist.insert(*it);
+    }
+  }
   // Recall that we create one mapper for every processor.  We
   // only want to print out this information one time, so only
   // do it if we are the mapper for the first processor in the
@@ -525,6 +566,46 @@ AdversarialMapper::AdversarialMapper(Machine m,
               it->id, affinities[0].bandwidth, affinities[0].latency);
     }
   }
+}
+
+//--------------------------------------------------------------------------
+void AdversarialMapper::handle_message(const MapperContext ctx,
+                                 const MapperMessage& message)
+//--------------------------------------------------------------------------
+{
+  switch(message.kind) {
+    case TASK_STEAL_REQUEST:
+    {
+      if (task_steal_processor_blacklist.find(message.sender) != task_steal_processor_blacklist.end()) {
+        task_steal_processor_blacklist.erase(message.sender);
+        printf("<<<<<<<<I %llx, received a message from proc %llx, msg %s\n", local_proc.id, message.sender.id, message.message);
+      }
+      break;
+    }
+    default: assert(false);
+  }
+}
+
+void AdversarialMapper::select_task_options(const MapperContext ctx,
+                                            const Task& task,
+                                                  TaskOptions& output)
+{
+  output.inline_task = false;
+  output.stealable = true;
+  output.map_locally = false;
+  output.initial_proc = select_processor_by_id(local_proc.kind(), 0);
+}
+
+Processor AdversarialMapper::select_processor_by_id(Processor::Kind kind, const int id)
+{
+  Machine::ProcessorQuery mymachine(machine);
+  mymachine.only_kind(kind);
+  int chosen = id;
+  assert(id < mymachine.count());
+ // printf("count %d\n", mymachine.count());
+  Machine::ProcessorQuery::iterator it = mymachine.begin();
+  for (int idx = 0; idx < chosen; idx++) it++;
+  return (*it);
 }
 
 //--------------------------------------------------------------------------
@@ -922,6 +1003,38 @@ void AdversarialMapper::default_map_task(const MapperContext         ctx,
       }
     }
   }  
+}
+
+void AdversarialMapper::slice_task(const MapperContext      ctx,
+                                   const Task&              task,
+                                   const SliceTaskInput&    input,
+                                         SliceTaskOutput&   output)
+{
+  char hostname[1024];
+  hostname[1023] = '\0';
+  gethostname(hostname, 1023);
+  printf("i am in slice_task ctx %p, host %s\n", ctx, hostname);
+  // Iterate over all the points and send them all over the world
+  output.slices.resize(input.domain.get_volume());
+  unsigned idx = 0;
+  switch (input.domain.get_dim())
+  {
+    case 1:
+      {
+        Rect<1> rect = input.domain;
+        for (PointInRectIterator<1> pir(rect); pir(); pir++, idx++)
+        {
+          Rect<1> slice(*pir, *pir);
+          Processor proc = select_processor_by_id(task.target_proc.kind(), 1);
+          output.slices[idx] = TaskSlice(slice, proc,
+              false/*recurse*/, true/*stealable*/);
+          printf("index task %p, target proc %llx, slice task process id %llx\n", &task, task.target_proc.id, proc.id);
+        }
+        break;
+      }
+    default:
+      assert(false);
+  }
 }                                         
 
 //--------------------------------------------------------------------------
@@ -946,7 +1059,7 @@ void AdversarialMapper::select_tasks_to_map(const MapperContext          ctx,
 {
   pthread_t         self;
   self = pthread_self();
-  printf("in my select tasks to map tid %lld, this:%p, ctx:%p\n", self, this, ctx);
+  printf("in my select tasks to map tid %lld, this:%p, ctx:%p, proc %llx\n", self, this, ctx, local_proc);
   
   unsigned count = 0;
   for (std::list<const Task*>::const_iterator it = 
@@ -1024,8 +1137,41 @@ void AdversarialMapper::map_task(const MapperContext         ctx,
   }
   default_map_task(ctx, task, input, output); 
 
-  output.target_procs.clear();
-  output.target_procs.push_back(local_proc);
+//  output.target_procs.clear();
+//  output.target_procs.push_back(local_proc);
+}
+
+//--------------------------------------------------------------------------
+void AdversarialMapper::select_steal_targets(const MapperContext         ctx,
+                                     const SelectStealingInput&  input,
+                                           SelectStealingOutput& output)
+//--------------------------------------------------------------------------
+{
+ // Always send a steal request
+  Processor target = select_processor_by_id(local_proc.kind(), 1);
+  if (target != local_proc) {
+    printf("********** assert blacklist size %d\n", task_steal_processor_blacklist.size());
+  }
+  if ((target != local_proc) && 
+      (task_steal_processor_blacklist.find(target) == task_steal_processor_blacklist.end())) {
+    output.targets.insert(target);
+    printf("$$$$$$$$$$$$$$$ local %llx, steal target %llx\n", local_proc.id, target.id);
+    //assert(0);
+  }
+}
+
+//--------------------------------------------------------------------------
+void AdversarialMapper::permit_steal_request(const MapperContext         ctx,
+                                      const StealRequestInput&    input,
+                                            StealRequestOutput&   output)
+//--------------------------------------------------------------------------
+{
+    unsigned index = 1 % input.stealable_tasks.size();
+    std::vector<const Task*>::const_iterator it = 
+      input.stealable_tasks.begin();
+    for (unsigned idx = 0; idx < index; idx++) it++;
+    output.stolen_tasks.insert(*it);
+    printf("&&&&&&&&&&&&&&&&&&permit task steal size %d\n", input.stealable_tasks.size());
 }
 
 
@@ -1099,7 +1245,9 @@ void AdversarialMapper::report_profiling(const MapperContext      ctx,
         task_profile.duration = timeline->end_time - timeline->start_time;
         shared_variables->task_profiling_history[task.task_id] = task_profile;
         if (task_profile.duration / task_previous_profile.duration > shared_variables->task_slowdown_allowance) {
-             shared_variables->task_use_recursive[task.task_id] = true;
+      //    shared_variables->task_use_recursive[task.task_id] = true;
+          char *msg = "steal_task"; 
+          runtime->broadcast(ctx, msg, sizeof(char)*10, TASK_STEAL_REQUEST);
         }
       } else {
         task_profiling_t task_profile;
@@ -1322,8 +1470,8 @@ void daxpy_task(const Task *task,
   pthread_t         self;
   self = pthread_self();
 
-  printf("Running daxpy computation with alpha %.8g for point %d size %d, is_recursive_task %d, host %s, thread %lld...\n", 
-          alpha, point, size, is_recursive_task, hostname, self);
+  printf("Running daxpy computation with alpha %.8g for point %d size %d, is_recursive_task %d, host %s, thread %lld, current_proc %llx, target_proc %llx\n", 
+          alpha, point, size, is_recursive_task, hostname, self, task->current_proc, task->target_proc);
 
   for (PointInRectIterator<1> pir(rect); pir(); pir++)
     acc_z[*pir] = alpha * acc_x[*pir] + acc_y[*pir];
