@@ -27,14 +27,7 @@
 using namespace Legion;
 using namespace Legion::Mapping;
 
-/*
- * In this example, we perform the same
- * daxpy computation as example 07.  While
- * the source code for the actual computation
- * between the two examples is identical, we 
- * show to create a custom mapper that changes 
- * the mapping of the computation onto the hardware.
- */
+#define USE_DEFAULT
 
 enum TaskIDs {
   TOP_LEVEL_TASK_ID,
@@ -219,12 +212,46 @@ RecursiveTaskMapperShared::RecursiveTaskMapperShared()
   recursive_tasks_scheduled = 0;
 }
 
-class AdversarialMapper : public DefaultMapper {
+class AdaptiveMapper : public DefaultMapper {
 public:
-  AdversarialMapper(Machine machine, 
+  AdaptiveMapper(Machine machine, 
       Runtime *rt, Processor local, RecursiveTaskMapperShared *shared);
 public:
-  Processor select_processor_by_id(Processor::Kind kind, const int id);
+  virtual void handle_message(const MapperContext  ctx,
+                              const MapperMessage& message);
+                              
+  virtual void select_task_options(const MapperContext ctx,
+                                   const Task&         task,
+                                         TaskOptions&  output);
+                                 
+  virtual void slice_task(const MapperContext      ctx,
+                          const Task&              task,
+                          const SliceTaskInput&    input,
+                                SliceTaskOutput&   output);
+  
+  virtual void select_tasks_to_map(const MapperContext          ctx,
+                                   const SelectMappingInput&    input,
+                                         SelectMappingOutput&   output);
+                                         
+  virtual void map_task(const MapperContext   ctx,
+                        const Task&           task,
+                        const MapTaskInput&   input,
+                              MapTaskOutput&  output);
+                              
+  virtual void select_steal_targets(const MapperContext         ctx,
+                                    const SelectStealingInput&  input,
+                                          SelectStealingOutput& output);
+       
+  virtual void permit_steal_request(const MapperContext         ctx,
+                                    const StealRequestInput&    input,
+                                          StealRequestOutput&   output);
+                                          
+  virtual void report_profiling(const MapperContext      ctx,
+				                        const Task&              task,
+				                        const TaskProfilingInfo& input);
+protected:
+  Processor select_processor_by_id(Processor::Kind kind, const unsigned int id);
+  
   const std::map<VariantID,Processor::Kind>& find_task_variants(
                                             MapperContext ctx, TaskID task_id);
   
@@ -237,54 +264,31 @@ public:
       const RegionRequirement &req, 
       std::vector<PhysicalInstance> &chosen_instances, Processor restricted);
   
-  void triggerSelectTasksToMap(const MapperContext ctx);
+  void trigger_select_tasks_to_map(const MapperContext ctx);
   
-  virtual void handle_message(const MapperContext ctx,
-                                 const MapperMessage& message);
-  virtual void select_task_options(const MapperContext ctx,
-                                            const Task& task,
-                                                  TaskOptions& output);
-                                 
-  virtual void slice_task(const MapperContext      ctx,
-                                   const Task&              task,
-                                   const SliceTaskInput&    input,
-                                         SliceTaskOutput&   output);
-  
-  virtual void select_tasks_to_map(const MapperContext          ctx,
-                                   const SelectMappingInput&    input,
-                                   SelectMappingOutput&   output);
-  virtual void map_task(const MapperContext ctx,
-                        const Task& task,
-                        const MapTaskInput& input,
-                              MapTaskOutput& output);
-  virtual void select_steal_targets(const MapperContext         ctx,
-                             const SelectStealingInput&  input,
-                                   SelectStealingOutput& output);
-       
-  virtual void permit_steal_request(const MapperContext         ctx,
-      const StealRequestInput&    input,
-            StealRequestOutput&   output);
-  virtual void report_profiling(const MapperContext      ctx,
-				const Task&              task,
-				const TaskProfilingInfo& input);
-protected:
   long generate_random_integer(void) const 
         { return default_generate_random_integer(); }
-  void default_map_task(const MapperContext ctx,
-                        const Task& task,
-                        const MapTaskInput& input,
-                              MapTaskOutput& output);   
+  
+  void default_map_task(const MapperContext   ctx,
+                        const Task&           task,
+                        const MapTaskInput&   input,
+                              MapTaskOutput&  output);   
 
 protected:
   std::map<TaskID,std::map<VariantID,
                             Processor::Kind> > variant_processor_kinds;
 private:
-  RecursiveTaskMapperShared *shared_variables;
   MapperEvent defer_select_tasks_to_map;
   int recursive_tasks_scheduled;
+  std::map<TaskID, task_profiling_t> task_profiling_history;
+  std::map<TaskID, bool> task_use_recursive;
+  double task_slowdown_allowance;
+  int max_recursive_tasks_to_schedule;
   std::set<Processor> task_steal_processor_blacklist;
   
 };
+
+static LegionRuntime::Logger::Category log_adapt_mapper("adapt_mapper");
 /*
 class PartitioningMapper : public DefaultMapper {
 public:
@@ -298,42 +302,7 @@ public:
 };
 */
 
-// Mappers are created after the Legion runtime
-// starts but before the application begins 
-// executing.  To create mappers the application
-// registers a callback function for the runtime
-// to perform prior to beginning execution.  In
-// this example we call it the 'mapper_registration'
-// function.  (See below for where we register
-// this callback with the runtime.)  The callback
-// function must have this type, which allows the
-// runtime to pass the necessary parameters in
-// for creating new mappers.
-//
-// In Legion, mappers are identified by a MapperID.
-// Zero is reserved for the DefaultMapper, but 
-// other mappers can replace it by using the 
-// 'replace_default_mapper' call.  Other mappers
-// can be registered with their own IDs using the
-// 'add_mapper' method call on the runtime.
-//
-// The model for Legion is that there should always
-// be one mapper for every processor in the system.
-// This guarantees that there is never contention
-// for the mappers because multiple processors need
-// to access the same mapper object.  When the
-// runtime invokes the 'mapper_registration' callback,
-// it gives a list of local processors which 
-// require a mapper if a new mapper class is to be
-// created.  In a multi-node setting, the runtime
-// passes in a subset of the processors for which
-// mappers need to be created on the local node.
-//
-// Here we override the DefaultMapper ID so that
-// all tasks that normally would have used the
-// DefaultMapper will now use our AdversarialMapper.
-// We create one new mapper for each processor
-// and register it with the runtime.
+
 void mapper_registration(Machine machine, Runtime *rt,
                           const std::set<Processor> &local_procs)
 {
@@ -342,36 +311,26 @@ void mapper_registration(Machine machine, Runtime *rt,
         it != local_procs.end(); it++)
   {
     rt->replace_default_mapper(
-        new AdversarialMapper(machine, rt, *it, mapper_shared), *it);
+        new AdaptiveMapper(machine, rt, *it, mapper_shared), *it);
   }
 }
 
-// Here is the constructor for our adversarial mapper.
-// We'll use the constructor to illustrate how mappers can
-// get access to information regarding the current machine.
-AdversarialMapper::AdversarialMapper(Machine m, 
-                                     Runtime *rt, Processor p, RecursiveTaskMapperShared *mapper_shared_variables)
-  : DefaultMapper(rt->get_mapper_runtime(), m, p) // pass arguments through to TestMapper 
+//--------------------------------------------------------------------------
+AdaptiveMapper::AdaptiveMapper(Machine m, 
+                                     Runtime *rt, Processor p, 
+                                     RecursiveTaskMapperShared *mapper_shared_variables)
+  : DefaultMapper(rt->get_mapper_runtime(), m, p) // pass arguments through to DefaultMapper 
+//--------------------------------------------------------------------------
 {
-  // The machine object is a singleton object that can be
-  // used to get information about the underlying hardware.
-  // The machine pointer will always be provided to all
-  // mappers, but can be accessed anywhere by the static
-  // member method Machine::get_machine().  Here we get
-  // a reference to the set of all processors in the machine
-  // from the machine object.  Note that the Machine object
-  // actually comes from the Legion low-level runtime, most
-  // of which is not directly needed by application code.
-  // Typedefs in legion_types.h ensure that all necessary
-  // types for querying the machine object are in scope
-  // in the Legion namespace.
-  shared_variables = mapper_shared_variables;
-  
+  // init
+  task_slowdown_allowance = 2;
+  max_recursive_tasks_to_schedule = 1;
   recursive_tasks_scheduled = 0;
   
   std::set<Processor> all_procs;
   machine.get_all_processors(all_procs);
   
+  // init blacklist
   for (std::set<Processor>::const_iterator it = all_procs.begin();
         it != all_procs.end(); it++)
   {
@@ -530,18 +489,6 @@ AdversarialMapper::AdversarialMapper(Machine m,
       }
     }
 
-    // The Legion machine model represented by the machine object
-    // can be thought of as a graph with processors and memories
-    // as the two kinds of nodes.  There are two kinds of edges
-    // in this graph: processor-memory edges and memory-memory
-    // edges.  An edge between a processor and a memory indicates
-    // that the processor can directly perform load and store
-    // operations to that memory.  Memory-memory edges indicate
-    // that data movement can be directly performed between the
-    // two memories.  To illustrate how this works we examine
-    // all the memories visible to our local processor in 
-    // this mapper.  We can get our set of visible memories
-    // using the 'get_visible_memories' method on the machine.
     std::set<Memory> vis_mems;
     machine.get_visible_memories(local_proc, vis_mems);
     printf("There are %zd memories visible from processor " IDFMT "\n",
@@ -569,7 +516,7 @@ AdversarialMapper::AdversarialMapper(Machine m,
 }
 
 //--------------------------------------------------------------------------
-void AdversarialMapper::handle_message(const MapperContext ctx,
+void AdaptiveMapper::handle_message(const MapperContext ctx,
                                  const MapperMessage& message)
 //--------------------------------------------------------------------------
 {
@@ -578,7 +525,7 @@ void AdversarialMapper::handle_message(const MapperContext ctx,
     {
       if (task_steal_processor_blacklist.find(message.sender) != task_steal_processor_blacklist.end()) {
         task_steal_processor_blacklist.erase(message.sender);
-        printf("<<<<<<<<I %llx, received a message from proc %llx, msg %s\n", local_proc.id, message.sender.id, message.message);
+        log_adapt_mapper.debug("%s, local_proc: %llx, received a message from proc %llx, msg %s", __FUNCTION__, local_proc.id, message.sender.id, (char*)message.message);
       }
       break;
     }
@@ -586,30 +533,309 @@ void AdversarialMapper::handle_message(const MapperContext ctx,
   }
 }
 
-void AdversarialMapper::select_task_options(const MapperContext ctx,
+//--------------------------------------------------------------------------
+void AdaptiveMapper::select_task_options(const MapperContext ctx,
                                             const Task& task,
                                                   TaskOptions& output)
+//--------------------------------------------------------------------------
 {
+#if defined USE_DEFAULT
+  DefaultMapper::select_task_options(ctx, task, output);
+#else 
   output.inline_task = false;
   output.stealable = true;
   output.map_locally = false;
   output.initial_proc = select_processor_by_id(local_proc.kind(), 0);
+#endif
 }
 
-Processor AdversarialMapper::select_processor_by_id(Processor::Kind kind, const int id)
+
+//--------------------------------------------------------------------------
+void AdaptiveMapper::slice_task(const MapperContext      ctx,
+                                   const Task&              task,
+                                   const SliceTaskInput&    input,
+                                         SliceTaskOutput&   output)
+//--------------------------------------------------------------------------
+{
+#if defined USE_DEFAULT
+  DefaultMapper::slice_task(ctx, task, input, output);
+#else
+  log_adapt_mapper.debug("%s, local_proc: %llx", __FUNCTION__, local_proc.id);
+  // Iterate over all the points and send them all over the world
+  output.slices.resize(input.domain.get_volume());
+  unsigned idx = 0;
+  switch (input.domain.get_dim())
+  {
+    case 1:
+      {
+        Rect<1> rect = input.domain;
+        for (PointInRectIterator<1> pir(rect); pir(); pir++, idx++)
+        {
+          Rect<1> slice(*pir, *pir);
+          Processor proc = select_processor_by_id(task.target_proc.kind(), 1);
+          output.slices[idx] = TaskSlice(slice, proc,
+              false/*recurse*/, true/*stealable*/);
+          log_adapt_mapper.debug("index task: %p, target proc: %llx, slice task process id: %llx", &task, task.target_proc.id, proc.id);
+        }
+        break;
+      }
+    default:
+      assert(false);
+  }
+#endif
+}                                         
+
+//--------------------------------------------------------------------------
+void AdaptiveMapper::select_tasks_to_map(const MapperContext          ctx,
+                                         const SelectMappingInput&    input,
+                                               SelectMappingOutput&   output)
+//--------------------------------------------------------------------------
+{
+  log_adapt_mapper.debug("%s, local_proc: %llx", __FUNCTION__, local_proc.id);
+  
+  unsigned count = 0;
+  for (std::list<const Task*>::const_iterator it = 
+        input.ready_tasks.begin(); (count < max_schedule_count) && 
+        (it != input.ready_tasks.end()); it++)
+  {
+    const Task *task = *it; 
+    if (RecursiveTaskArgument::is_task_recursiveable(task)) {
+      if (recursive_tasks_scheduled >= max_recursive_tasks_to_schedule) {
+        log_adapt_mapper.debug("%s, task find: %s, but not schedule, task_scheduled: %d", __FUNCTION__, task->get_task_name(), recursive_tasks_scheduled);
+        if (!defer_select_tasks_to_map.exists()) {
+          defer_select_tasks_to_map = runtime->create_mapper_event(ctx);
+        }
+        output.deferral_event = defer_select_tasks_to_map;
+        continue;
+      }
+      // TODO: now, use a trick, slice task is sliced into 4 points, so with -ll:cpu 1, set to 4, -ll:cpu 2, set to 2.
+      recursive_tasks_scheduled +=2;
+      log_adapt_mapper.debug("%s, task find: %s, schedule, task_scheduled: %d, target proc: %llx", __FUNCTION__, task->get_task_name(), recursive_tasks_scheduled, task->target_proc.id);
+    }
+    output.map_tasks.insert(*it);
+    count++;
+  }
+
+}
+
+//--------------------------------------------------------------------------
+void AdaptiveMapper::map_task(const MapperContext         ctx,
+                              const Task&                 task,
+                              const MapTaskInput&         input,
+                                    MapTaskOutput&        output)
+//--------------------------------------------------------------------------
+{
+  // Pick a variant, then pick separate instances for all the 
+  // fields in a region requirement
+  const std::map<VariantID,Processor::Kind> &variant_kinds = 
+    find_task_variants(ctx, task.task_id);
+  std::vector<VariantID> variants;
+  for (std::map<VariantID,Processor::Kind>::const_iterator it = 
+        variant_kinds.begin(); it != variant_kinds.end(); it++)
+  {
+    if (task.target_proc.kind() == it->second)
+      variants.push_back(it->first);
+  }
+  assert(!variants.empty());
+  if (variants.size() > 1)
+  {
+    log_adapt_mapper.debug("%s, task: %s, task_target_proc: %llx, local_proc: %llx", __FUNCTION__, task.get_task_name(), task.target_proc.id, local_proc.id);
+    bool task_recursiveable = RecursiveTaskArgument::is_task_recursiveable(&task);
+    std::map<TaskID, bool>::iterator it = task_use_recursive.find(task.task_id);
+    // the first time encounter this task
+    if (it == task_use_recursive.end()) {
+      task_use_recursive[task.task_id] = false;
+    } 
+ //   task_use_recursive[task.task_id] = false; 
+    int chosen_v = 0;
+    //printf("number of variants %d\n", variants.size());
+    const int point = task.index_point.point_data[0];
+    if (task_use_recursive[task.task_id] && task_recursiveable) {
+      RecursiveTaskArgument::set_task_is_recursive_task(&task);
+      chosen_v = 1;
+    } else {
+      chosen_v = 0;
+    }
+    output.chosen_variant = variants[chosen_v];
+    
+  }
+  else
+    output.chosen_variant = variants[0];
+  
+  // Let's ask for some profiling data to see the impact of our choices
+  {
+    using namespace ProfilingMeasurements;
+    output.task_prof_requests.add_measurement<OperationStatus>();
+    output.task_prof_requests.add_measurement<OperationTimeline>();
+ //   output.task_prof_requests.add_measurement<RuntimeOverhead>();
+  }
+  default_map_task(ctx, task, input, output); 
+
+  output.target_procs.clear();
+  output.target_procs.push_back(local_proc);
+}
+
+//--------------------------------------------------------------------------
+void AdaptiveMapper::select_steal_targets(const MapperContext         ctx,
+                                             const SelectStealingInput&  input,
+                                                   SelectStealingOutput& output)
+//--------------------------------------------------------------------------
+{
+ // Always send a steal request
+  Processor target = select_processor_by_id(local_proc.kind(), 1);
+  if (target != local_proc) {
+    //printf("********** assert blacklist size %d\n", task_steal_processor_blacklist.size());
+  }
+  if ((target != local_proc) && 
+      (task_steal_processor_blacklist.find(target) == task_steal_processor_blacklist.end())) {
+    output.targets.insert(target);
+    log_adapt_mapper.debug("%s, local_proc: %llx, steal target %llx\n", __FUNCTION__, local_proc.id, target.id);
+    //assert(0);
+  }
+}
+
+//--------------------------------------------------------------------------
+void AdaptiveMapper::permit_steal_request(const MapperContext         ctx,
+                                          const StealRequestInput&    input,
+                                                StealRequestOutput&   output)
+//--------------------------------------------------------------------------
+{
+  if (input.stealable_tasks.size() == 0) {
+    return;
+  }
+  unsigned index = 1 % input.stealable_tasks.size();
+  std::vector<const Task*>::const_iterator it = 
+    input.stealable_tasks.begin();
+  for (unsigned idx = 0; idx < index; idx++) it++;
+  output.stolen_tasks.insert(*it);
+  log_adapt_mapper.debug("%s, local_proc: %llx, stealable size %ld", __FUNCTION__, local_proc.id, input.stealable_tasks.size());
+}
+
+//--------------------------------------------------------------------------
+void AdaptiveMapper::report_profiling(const MapperContext      ctx,
+					                            const Task&              task,
+					                            const TaskProfilingInfo& input)
+//--------------------------------------------------------------------------
+{
+  // Local import of measurement names saves typing here without polluting
+  // namespace for everybody else
+  using namespace ProfilingMeasurements;
+
+  // You are not guaranteed to get measurements you asked for, so make sure to
+  // check the result of calls to get_measurement (or just call has_measurement
+  // first).  Also, the call returns a copy of the result that you must delete
+  // yourself.
+  /*
+  OperationStatus *status = 
+    input.profiling_responses.get_measurement<OperationStatus>();
+  if (status)
+  {
+    switch (status->result)
+    {
+      case OperationStatus::COMPLETED_SUCCESSFULLY:
+        {
+          printf("Task %s COMPLETED SUCCESSFULLY\n", task.get_task_name());
+          break;
+        }
+      case OperationStatus::COMPLETED_WITH_ERRORS:
+        {
+          printf("Task %s COMPLETED WITH ERRORS\n", task.get_task_name());
+          break;
+        }
+      case OperationStatus::INTERRUPT_REQUESTED:
+        {
+          printf("Task %s was INTERRUPTED\n", task.get_task_name());
+          break;
+        }
+      case OperationStatus::TERMINATED_EARLY:
+        {
+          printf("Task %s TERMINATED EARLY\n", task.get_task_name());
+          break;
+        }
+      case OperationStatus::CANCELLED:
+        {
+          printf("Task %s was CANCELLED\n", task.get_task_name());
+          break;
+        }
+      default:
+        assert(false); // shouldn't get any of the rest currently
+    }
+    delete status;
+  }
+  else
+    printf("No operation status for task %s\n", task.get_task_name());*/
+
+  if (RecursiveTaskArgument::is_task_recursiveable(&task)) {
+    OperationTimeline *timeline =
+      input.profiling_responses.get_measurement<OperationTimeline>();
+    if (timeline)
+    {
+      recursive_tasks_scheduled --;
+      if (recursive_tasks_scheduled < 0) recursive_tasks_scheduled = 0;
+      bool is_recursive_task = RecursiveTaskArgument::is_task_recursive_task(&task);
+      // find the profiling history of task
+      std::map<TaskID, task_profiling_t>::iterator it;
+      it = task_profiling_history.find(task.task_id);
+      if (it != task_profiling_history.end()) {
+        task_profiling_t task_previous_profile = it->second;
+        task_profiling_t task_profile;
+        task_profile.is_recursive_task = is_recursive_task;
+        task_profile.duration = timeline->end_time - timeline->start_time;
+        task_profiling_history[task.task_id] = task_profile;
+        if (task_profile.duration / task_previous_profile.duration > task_slowdown_allowance) {
+            task_use_recursive[task.task_id] = true;
+        //  char *msg = "steal_task"; 
+       //   runtime->broadcast(ctx, msg, sizeof(char)*10, TASK_STEAL_REQUEST);
+        }
+      } else {
+        task_profiling_t task_profile;
+        task_profile.is_recursive_task = is_recursive_task;
+        task_profile.duration = timeline->end_time - timeline->start_time;
+        task_profiling_history[task.task_id] = task_profile;
+      }
+      const Task *parent_task = task.parent_task;
+      char *parent_task_name = "NULL";
+      if (parent_task != NULL) {
+        parent_task_name = (char*)parent_task->get_task_name();
+      }
+      int is_recursive_task_int = 0;
+      if (is_recursive_task) {
+        is_recursive_task_int = 1;
+      }
+      log_adapt_mapper.debug("%s, task: %s: ready=%lld start=%lld stop=%lld duration=%lld, parent: %s, is_recursive_task %d",
+       __FUNCTION__,
+  	   task.get_task_name(),
+  	   timeline->ready_time,
+  	   timeline->start_time,
+  	   timeline->end_time, timeline->end_time - timeline->start_time, parent_task_name, is_recursive_task_int);
+      delete timeline;
+      if (recursive_tasks_scheduled < max_recursive_tasks_to_schedule) {
+        trigger_select_tasks_to_map(ctx);
+      }
+    }
+    else {
+      log_adapt_mapper.debug("No operation timeline for task %s", task.get_task_name());
+    }
+  }
+
+}
+
+//--------------------------------------------------------------------------
+Processor AdaptiveMapper::select_processor_by_id(Processor::Kind kind, 
+                                                 const unsigned int chosen_id)
+//--------------------------------------------------------------------------
 {
   Machine::ProcessorQuery mymachine(machine);
   mymachine.only_kind(kind);
-  int chosen = id;
-  assert(id < mymachine.count());
+  assert(chosen_id < mymachine.count());
  // printf("count %d\n", mymachine.count());
   Machine::ProcessorQuery::iterator it = mymachine.begin();
-  for (int idx = 0; idx < chosen; idx++) it++;
+  for (unsigned int idx = 0; idx < chosen_id; idx++) it++;
   return (*it);
 }
 
 //--------------------------------------------------------------------------
-const std::map<VariantID,Processor::Kind>& AdversarialMapper::find_task_variants(
+const std::map<VariantID,Processor::Kind>& AdaptiveMapper::find_task_variants(
                                           MapperContext ctx, TaskID task_id)
 //--------------------------------------------------------------------------
 {
@@ -637,7 +863,7 @@ const std::map<VariantID,Processor::Kind>& AdversarialMapper::find_task_variants
 }
 
 //--------------------------------------------------------------------------
-void AdversarialMapper::map_constrained_requirement(MapperContext ctx,
+void AdaptiveMapper::map_constrained_requirement(MapperContext ctx,
     const RegionRequirement &req, MappingKind mapping_kind, 
     const std::vector<LayoutConstraintID> &constraints,
     std::vector<PhysicalInstance> &chosen_instances, Processor restricted) 
@@ -689,7 +915,7 @@ void AdversarialMapper::map_constrained_requirement(MapperContext ctx,
 }
 
 //--------------------------------------------------------------------------
-void AdversarialMapper::map_random_requirement(MapperContext ctx,
+void AdaptiveMapper::map_random_requirement(MapperContext ctx,
     const RegionRequirement &req, 
     std::vector<PhysicalInstance> &chosen_instances, Processor restricted)
 //--------------------------------------------------------------------------
@@ -749,7 +975,7 @@ void AdversarialMapper::map_random_requirement(MapperContext ctx,
 }
 
 //--------------------------------------------------------------------------
-void AdversarialMapper::default_map_task(const MapperContext         ctx,
+void AdaptiveMapper::default_map_task(const MapperContext         ctx,
                                          const Task&                 task,
                                          const MapTaskInput&         input,
                                                MapTaskOutput&        output)
@@ -1005,306 +1231,21 @@ void AdversarialMapper::default_map_task(const MapperContext         ctx,
   }  
 }
 
-void AdversarialMapper::slice_task(const MapperContext      ctx,
-                                   const Task&              task,
-                                   const SliceTaskInput&    input,
-                                         SliceTaskOutput&   output)
-{
-  char hostname[1024];
-  hostname[1023] = '\0';
-  gethostname(hostname, 1023);
-  printf("i am in slice_task ctx %p, host %s\n", ctx, hostname);
-  // Iterate over all the points and send them all over the world
-  output.slices.resize(input.domain.get_volume());
-  unsigned idx = 0;
-  switch (input.domain.get_dim())
-  {
-    case 1:
-      {
-        Rect<1> rect = input.domain;
-        for (PointInRectIterator<1> pir(rect); pir(); pir++, idx++)
-        {
-          Rect<1> slice(*pir, *pir);
-          Processor proc = select_processor_by_id(task.target_proc.kind(), 1);
-          output.slices[idx] = TaskSlice(slice, proc,
-              false/*recurse*/, true/*stealable*/);
-          printf("index task %p, target proc %llx, slice task process id %llx\n", &task, task.target_proc.id, proc.id);
-        }
-        break;
-      }
-    default:
-      assert(false);
-  }
-}                                         
-
 //--------------------------------------------------------------------------
-void AdversarialMapper::triggerSelectTasksToMap(const MapperContext ctx)
+void AdaptiveMapper::trigger_select_tasks_to_map(const MapperContext ctx)
 //--------------------------------------------------------------------------
 {
   if (defer_select_tasks_to_map.exists()){
-    printf("!!!!!!!retrigger select tasks to map ctx %p\n", ctx);
+    log_adapt_mapper.debug("%s, local_proc: %llx", __FUNCTION__, local_proc.id);
     MapperEvent temp_event = defer_select_tasks_to_map;
     defer_select_tasks_to_map = MapperEvent();
     runtime->trigger_mapper_event(ctx, temp_event);
   } else {
-//    log_psana_mapper.debug("proc %llx: try to trigger but event not exist",
-  //                         local_proc.id);
+//    log_adapt_mapper.debug("proc %llx: try to trigger but event not exist",
+//                           local_proc.id);
   }
 }
 
-
-void AdversarialMapper::select_tasks_to_map(const MapperContext          ctx,
-                                            const SelectMappingInput&    input,
-                                            SelectMappingOutput&   output)
-{
-  pthread_t         self;
-  self = pthread_self();
-  printf("in my select tasks to map tid %lld, this:%p, ctx:%p, proc %llx\n", self, this, ctx, local_proc);
-  
-  unsigned count = 0;
-  for (std::list<const Task*>::const_iterator it = 
-        input.ready_tasks.begin(); (count < max_schedule_count) && 
-        (it != input.ready_tasks.end()); it++)
-  {
-    const Task *task = *it; 
-    if (RecursiveTaskArgument::is_task_recursiveable(task)) {
-      if (recursive_tasks_scheduled >= shared_variables->max_recursive_tasks_to_schedule) {
-        printf("~~~~~~~~task find %s, but not schedule, task_scheduled %d\n", task->get_task_name(), recursive_tasks_scheduled);
-        if (!defer_select_tasks_to_map.exists()) {
-          defer_select_tasks_to_map = runtime->create_mapper_event(ctx);
-        }
-        output.deferral_event = defer_select_tasks_to_map;
-        continue;
-      }
-      // TODO: now, use a trick, slice task is sliced into 4 points, so with -ll:cpu 1, set to 4, -ll:cpu 2, set to 2.
-      recursive_tasks_scheduled +=1;
-      printf("!!!!!!!!!task find %s, schedule, task_scheduled %d, target proc %llx\n", task->get_task_name(), recursive_tasks_scheduled, task->target_proc);
-    }
-    output.map_tasks.insert(*it);
-    count++;
-  }
-
-}
-
-void AdversarialMapper::map_task(const MapperContext         ctx,
-                                 const Task&                 task,
-                                 const MapTaskInput&         input,
-                                       MapTaskOutput&        output)
-{
-  // Pick a variant, then pick separate instances for all the 
-  // fields in a region requirement
-  const std::map<VariantID,Processor::Kind> &variant_kinds = 
-    find_task_variants(ctx, task.task_id);
-  std::vector<VariantID> variants;
-  for (std::map<VariantID,Processor::Kind>::const_iterator it = 
-        variant_kinds.begin(); it != variant_kinds.end(); it++)
-  {
-    if (task.target_proc.kind() == it->second)
-      variants.push_back(it->first);
-  }
-  assert(!variants.empty());
-  if (variants.size() > 1)
-  {
-    printf("in map_task, task %s, mapper ctx %p\n", task.get_task_name(), ctx);
-    bool task_recursiveable = RecursiveTaskArgument::is_task_recursiveable(&task);
-    std::map<TaskID, bool>::iterator it = shared_variables->task_use_recursive.find(task.task_id);
-    // the first time encounter this task
-    if (it == shared_variables->task_use_recursive.end()) {
-      shared_variables->task_use_recursive[task.task_id] = false;
-    } 
- //   task_use_recursive[task.task_id] = false; 
-    int chosen_v = 0;
-    //printf("number of variants %d\n", variants.size());
-    const int point = task.index_point.point_data[0];
-    if (shared_variables->task_use_recursive[task.task_id] && task_recursiveable) {
-      RecursiveTaskArgument::set_task_is_recursive_task(&task);
-      chosen_v = 1;
-    } else {
-      chosen_v = 0;
-    }
-    output.chosen_variant = variants[chosen_v];
-    
-  }
-  else
-    output.chosen_variant = variants[0];
-  
-  // Let's ask for some profiling data to see the impact of our choices
-  {
-    using namespace ProfilingMeasurements;
-    output.task_prof_requests.add_measurement<OperationStatus>();
-    output.task_prof_requests.add_measurement<OperationTimeline>();
- //   output.task_prof_requests.add_measurement<RuntimeOverhead>();
-  }
-  default_map_task(ctx, task, input, output); 
-
-//  output.target_procs.clear();
-//  output.target_procs.push_back(local_proc);
-}
-
-//--------------------------------------------------------------------------
-void AdversarialMapper::select_steal_targets(const MapperContext         ctx,
-                                     const SelectStealingInput&  input,
-                                           SelectStealingOutput& output)
-//--------------------------------------------------------------------------
-{
- // Always send a steal request
-  Processor target = select_processor_by_id(local_proc.kind(), 1);
-  if (target != local_proc) {
-    printf("********** assert blacklist size %d\n", task_steal_processor_blacklist.size());
-  }
-  if ((target != local_proc) && 
-      (task_steal_processor_blacklist.find(target) == task_steal_processor_blacklist.end())) {
-    output.targets.insert(target);
-    printf("$$$$$$$$$$$$$$$ local %llx, steal target %llx\n", local_proc.id, target.id);
-    //assert(0);
-  }
-}
-
-//--------------------------------------------------------------------------
-void AdversarialMapper::permit_steal_request(const MapperContext         ctx,
-                                      const StealRequestInput&    input,
-                                            StealRequestOutput&   output)
-//--------------------------------------------------------------------------
-{
-    unsigned index = 1 % input.stealable_tasks.size();
-    std::vector<const Task*>::const_iterator it = 
-      input.stealable_tasks.begin();
-    for (unsigned idx = 0; idx < index; idx++) it++;
-    output.stolen_tasks.insert(*it);
-    printf("&&&&&&&&&&&&&&&&&&permit task steal size %d\n", input.stealable_tasks.size());
-}
-
-
-void AdversarialMapper::report_profiling(const MapperContext      ctx,
-					 const Task&              task,
-					 const TaskProfilingInfo& input)
-{
-  // Local import of measurement names saves typing here without polluting
-  // namespace for everybody else
-  using namespace ProfilingMeasurements;
-
-  // You are not guaranteed to get measurements you asked for, so make sure to
-  // check the result of calls to get_measurement (or just call has_measurement
-  // first).  Also, the call returns a copy of the result that you must delete
-  // yourself.
-  /*
-  OperationStatus *status = 
-    input.profiling_responses.get_measurement<OperationStatus>();
-  if (status)
-  {
-    switch (status->result)
-    {
-      case OperationStatus::COMPLETED_SUCCESSFULLY:
-        {
-          printf("Task %s COMPLETED SUCCESSFULLY\n", task.get_task_name());
-          break;
-        }
-      case OperationStatus::COMPLETED_WITH_ERRORS:
-        {
-          printf("Task %s COMPLETED WITH ERRORS\n", task.get_task_name());
-          break;
-        }
-      case OperationStatus::INTERRUPT_REQUESTED:
-        {
-          printf("Task %s was INTERRUPTED\n", task.get_task_name());
-          break;
-        }
-      case OperationStatus::TERMINATED_EARLY:
-        {
-          printf("Task %s TERMINATED EARLY\n", task.get_task_name());
-          break;
-        }
-      case OperationStatus::CANCELLED:
-        {
-          printf("Task %s was CANCELLED\n", task.get_task_name());
-          break;
-        }
-      default:
-        assert(false); // shouldn't get any of the rest currently
-    }
-    delete status;
-  }
-  else
-    printf("No operation status for task %s\n", task.get_task_name());*/
-
-  if (RecursiveTaskArgument::is_task_recursiveable(&task)) {
-    OperationTimeline *timeline =
-      input.profiling_responses.get_measurement<OperationTimeline>();
-    if (timeline)
-    {
-      recursive_tasks_scheduled --;
-      if (recursive_tasks_scheduled < 0) recursive_tasks_scheduled = 0;
-      bool is_recursive_task = RecursiveTaskArgument::is_task_recursive_task(&task);
-      // find the profiling history of task
-      std::map<TaskID, task_profiling_t>::iterator it;
-      it = shared_variables->task_profiling_history.find(task.task_id);
-      if (it != shared_variables->task_profiling_history.end()) {
-        task_profiling_t task_previous_profile = it->second;
-        task_profiling_t task_profile;
-        task_profile.is_recursive_task = is_recursive_task;
-        task_profile.duration = timeline->end_time - timeline->start_time;
-        shared_variables->task_profiling_history[task.task_id] = task_profile;
-        if (task_profile.duration / task_previous_profile.duration > shared_variables->task_slowdown_allowance) {
-      //    shared_variables->task_use_recursive[task.task_id] = true;
-          char *msg = "steal_task"; 
-          runtime->broadcast(ctx, msg, sizeof(char)*10, TASK_STEAL_REQUEST);
-        }
-      } else {
-        task_profiling_t task_profile;
-        task_profile.is_recursive_task = is_recursive_task;
-        task_profile.duration = timeline->end_time - timeline->start_time;
-        shared_variables->task_profiling_history[task.task_id] = task_profile;
-      }
-      const Task *parent_task = task.parent_task;
-      char *parent_task_name = "NULL";
-      if (parent_task != NULL) {
-        parent_task_name = (char*)parent_task->get_task_name();
-      }
-      int is_recursive_task_int = 0;
-      if (is_recursive_task) {
-        is_recursive_task_int = 1;
-      }
-      printf("Operation timeline for task %s: ready=%lld start=%lld stop=%lld duration=%lld, parent %s, is_recursive_task %d\n",
-  	   task.get_task_name(),
-  	   timeline->ready_time,
-  	   timeline->start_time,
-  	   timeline->end_time, timeline->end_time - timeline->start_time, parent_task_name, is_recursive_task_int);
-      delete timeline;
-      if (recursive_tasks_scheduled < shared_variables->max_recursive_tasks_to_schedule) {
-        triggerSelectTasksToMap(ctx);
-      }
-    }
-    else {
-      printf("No operation timeline for task %s\n", task.get_task_name());
-    }
-  }
-
-}
-
-#if 0
-PartitioningMapper::PartitioningMapper(Machine m,
-                                       Runtime *rt,
-                                       Processor p)
-  : DefaultMapper(rt->get_mapper_runtime(), m, p)
-{
-}
-
-void PartitioningMapper::select_tunable_value(const MapperContext ctx,
-                                              const Task& task,
-                                              const SelectTunableInput& input,
-                                                    SelectTunableOutput& output)
-{
-  if (input.tunable_id == SUBREGION_TUNABLE)
-  {
-    Machine::ProcessorQuery all_procs(machine);
-    all_procs.only_kind(Processor::LOC_PROC);
-    runtime->pack_tunable<size_t>(all_procs.count(), output);
-    return;
-  }
-  // Should never get here
-  assert(false);
-}
-#endif
 
 /*
  * Everything below here is the standard daxpy example
@@ -1471,7 +1412,7 @@ void daxpy_task(const Task *task,
   self = pthread_self();
 
   printf("Running daxpy computation with alpha %.8g for point %d size %d, is_recursive_task %d, host %s, thread %lld, current_proc %llx, target_proc %llx\n", 
-          alpha, point, size, is_recursive_task, hostname, self, task->current_proc, task->target_proc);
+          alpha, point, size, is_recursive_task, hostname, self, task->current_proc.id, task->target_proc.id);
 
   for (PointInRectIterator<1> pir(rect); pir(); pir++)
     acc_z[*pir] = alpha * acc_x[*pir] + acc_y[*pir];
