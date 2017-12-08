@@ -27,7 +27,7 @@
 using namespace Legion;
 using namespace Legion::Mapping;
 
-#define USE_DEFAULT
+//#define USE_DEFAULT
 
 enum TaskIDs {
   TOP_LEVEL_TASK_ID,
@@ -52,12 +52,18 @@ enum {
 
 typedef enum {
   TASK_STEAL_REQUEST = 1,
-  POOL_POOL_FORWARD_STEAL,
+  TASK_STEAL_ACK,
   POOL_WORKER_STEAL_ACK,
   POOL_POOL_FORWARD_STEAL_SUCCESS,
   POOL_WORKER_STEAL_NACK,
   POOL_WORKER_WAKEUP,
 } MessageType;
+
+
+typedef struct task_steal_request_s{
+  Processor target_proc;
+  unsigned num_tasks;
+} task_steal_request_t;
 
 
 typedef struct task_profiling_s {
@@ -285,22 +291,12 @@ private:
   double task_slowdown_allowance;
   int max_recursive_tasks_to_schedule;
   std::set<Processor> task_steal_processor_blacklist;
+  std::deque<task_steal_request_t> task_steal_request_queue;
+  bool select_tasks_to_map_local;
   
 };
 
 static LegionRuntime::Logger::Category log_adapt_mapper("adapt_mapper");
-/*
-class PartitioningMapper : public DefaultMapper {
-public:
-  PartitioningMapper(Machine machine,
-      Runtime *rt, Processor local);
-public:
-  virtual void select_tunable_value(const MapperContext ctx,
-                                    const Task& task,
-                                    const SelectTunableInput& input,
-                                          SelectTunableOutput& output);
-};
-*/
 
 
 void mapper_registration(Machine machine, Runtime *rt,
@@ -326,6 +322,7 @@ AdaptiveMapper::AdaptiveMapper(Machine m,
   task_slowdown_allowance = 2;
   max_recursive_tasks_to_schedule = 1;
   recursive_tasks_scheduled = 0;
+  select_tasks_to_map_local = true;
   
   std::set<Processor> all_procs;
   machine.get_all_processors(all_procs);
@@ -523,10 +520,20 @@ void AdaptiveMapper::handle_message(const MapperContext ctx,
   switch(message.kind) {
     case TASK_STEAL_REQUEST:
     {
-      if (task_steal_processor_blacklist.find(message.sender) != task_steal_processor_blacklist.end()) {
-        task_steal_processor_blacklist.erase(message.sender);
-        log_adapt_mapper.debug("%s, local_proc: %llx, received a message from proc %llx, msg %s", __FUNCTION__, local_proc.id, message.sender.id, (char*)message.message);
+      if (message.sender != local_proc) {
+        task_steal_request_t request = {local_proc, 1};
+        runtime->send_message(ctx, message.sender, &request, sizeof(task_steal_request_t), TASK_STEAL_ACK);
+        log_adapt_mapper.debug("%s, local_proc: %llx, received a message from proc %llx, STEAL", __FUNCTION__, local_proc.id, message.sender.id);
       }
+      break;
+    }
+    case TASK_STEAL_ACK:
+    {
+      select_tasks_to_map_local = false;
+      task_steal_request_t request = *(task_steal_request_t*)message.message;
+      task_steal_request_queue.push_back(request);
+      trigger_select_tasks_to_map(ctx);
+      log_adapt_mapper.debug("%s, local_proc: %llx, received a message from proc %llx, ACK", __FUNCTION__, local_proc.id, message.sender.id);
       break;
     }
     default: assert(false);
@@ -575,7 +582,7 @@ void AdaptiveMapper::slice_task(const MapperContext      ctx,
           Processor proc = select_processor_by_id(task.target_proc.kind(), 1);
           output.slices[idx] = TaskSlice(slice, proc,
               false/*recurse*/, true/*stealable*/);
-          log_adapt_mapper.debug("index task: %p, target proc: %llx, slice task process id: %llx", &task, task.target_proc.id, proc.id);
+          log_adapt_mapper.debug("index task: %p, original target proc: %llx, slice task process: %llx", &task, task.target_proc.id, proc.id);
         }
         break;
       }
@@ -591,31 +598,57 @@ void AdaptiveMapper::select_tasks_to_map(const MapperContext          ctx,
                                                SelectMappingOutput&   output)
 //--------------------------------------------------------------------------
 {
-  log_adapt_mapper.debug("%s, local_proc: %llx", __FUNCTION__, local_proc.id);
+  log_adapt_mapper.debug("%s, local_proc: %llx, ready_tasks size: %ld", __FUNCTION__, local_proc.id, input.ready_tasks.size());
   
   unsigned count = 0;
-  for (std::list<const Task*>::const_iterator it = 
-        input.ready_tasks.begin(); (count < max_schedule_count) && 
-        (it != input.ready_tasks.end()); it++)
+  
+  if (select_tasks_to_map_local == true)
   {
-    const Task *task = *it; 
-    if (RecursiveTaskArgument::is_task_recursiveable(task)) {
-      if (recursive_tasks_scheduled >= max_recursive_tasks_to_schedule) {
-        log_adapt_mapper.debug("%s, task find: %s, but not schedule, task_scheduled: %d", __FUNCTION__, task->get_task_name(), recursive_tasks_scheduled);
-        if (!defer_select_tasks_to_map.exists()) {
-          defer_select_tasks_to_map = runtime->create_mapper_event(ctx);
+    for (std::list<const Task*>::const_iterator it = 
+          input.ready_tasks.begin(); (count < max_schedule_count) && 
+          (it != input.ready_tasks.end()); it++)
+    {
+      const Task *task = *it; 
+      if (RecursiveTaskArgument::is_task_recursiveable(task)) {
+        // first, if there is task steal request, let's 
+        
+        if (recursive_tasks_scheduled >= max_recursive_tasks_to_schedule) {
+          log_adapt_mapper.debug("%s, task find: %s, but not schedule, task_scheduled: %d", __FUNCTION__, task->get_task_name(), recursive_tasks_scheduled);
+
+          continue;
         }
-        output.deferral_event = defer_select_tasks_to_map;
-        continue;
+        // TODO: now, use a trick, slice task is sliced into 4 points, so with -ll:cpu 1, set to 4, -ll:cpu 2, set to 2.
+        recursive_tasks_scheduled +=1;
+        log_adapt_mapper.debug("%s, task find: %s, schedule, task_scheduled: %d, target proc: %llx", __FUNCTION__, task->get_task_name(), recursive_tasks_scheduled, task->target_proc.id);
       }
-      // TODO: now, use a trick, slice task is sliced into 4 points, so with -ll:cpu 1, set to 4, -ll:cpu 2, set to 2.
-      recursive_tasks_scheduled +=2;
-      log_adapt_mapper.debug("%s, task find: %s, schedule, task_scheduled: %d, target proc: %llx", __FUNCTION__, task->get_task_name(), recursive_tasks_scheduled, task->target_proc.id);
+      
+      output.map_tasks.insert(*it);
+      //Processor target = select_processor_by_id(local_proc.kind(), 0);
+      //output.relocate_tasks[*it] = target;
+      count++;
     }
-    output.map_tasks.insert(*it);
-    count++;
+  } else {
+    assert(task_steal_request_queue.size() > 0);
+    task_steal_request_t &request = task_steal_request_queue.front();
+    for (std::list<const Task*>::const_iterator it = 
+          input.ready_tasks.begin(); (count < max_schedule_count) && 
+          (it != input.ready_tasks.end()); it++)
+    {
+      const Task *task = *it; 
+      if (RecursiveTaskArgument::is_task_recursiveable(task)) {
+        //Processor target = select_processor_by_id(local_proc.kind(), 0);
+        output.relocate_tasks[*it] = request.target_proc;
+        task_steal_request_queue.pop_front();
+        break;
+      }
+    }
+    select_tasks_to_map_local = true;
   }
 
+  if (!defer_select_tasks_to_map.exists()) {
+    defer_select_tasks_to_map = runtime->create_mapper_event(ctx);
+  }
+  output.deferral_event = defer_select_tasks_to_map;
 }
 
 //--------------------------------------------------------------------------
@@ -677,14 +710,14 @@ void AdaptiveMapper::map_task(const MapperContext         ctx,
 
 //--------------------------------------------------------------------------
 void AdaptiveMapper::select_steal_targets(const MapperContext         ctx,
-                                             const SelectStealingInput&  input,
-                                                   SelectStealingOutput& output)
+                                          const SelectStealingInput&  input,
+                                                SelectStealingOutput& output)
 //--------------------------------------------------------------------------
 {
  // Always send a steal request
   Processor target = select_processor_by_id(local_proc.kind(), 1);
   if (target != local_proc) {
-    //printf("********** assert blacklist size %d\n", task_steal_processor_blacklist.size());
+    log_adapt_mapper.debug("************* local_proc %llx, select target, blacklist size %d", local_proc.id, task_steal_processor_blacklist.size());
   }
   if ((target != local_proc) && 
       (task_steal_processor_blacklist.find(target) == task_steal_processor_blacklist.end())) {
@@ -771,7 +804,8 @@ void AdaptiveMapper::report_profiling(const MapperContext      ctx,
     if (timeline)
     {
       recursive_tasks_scheduled --;
-      if (recursive_tasks_scheduled < 0) recursive_tasks_scheduled = 0;
+    //  if (recursive_tasks_scheduled < 0) recursive_tasks_scheduled = 0;
+      assert(recursive_tasks_scheduled >= 0);
       bool is_recursive_task = RecursiveTaskArgument::is_task_recursive_task(&task);
       // find the profiling history of task
       std::map<TaskID, task_profiling_t>::iterator it;
@@ -783,9 +817,9 @@ void AdaptiveMapper::report_profiling(const MapperContext      ctx,
         task_profile.duration = timeline->end_time - timeline->start_time;
         task_profiling_history[task.task_id] = task_profile;
         if (task_profile.duration / task_previous_profile.duration > task_slowdown_allowance) {
-            task_use_recursive[task.task_id] = true;
-        //  char *msg = "steal_task"; 
-       //   runtime->broadcast(ctx, msg, sizeof(char)*10, TASK_STEAL_REQUEST);
+           // task_use_recursive[task.task_id] = true;
+            char *msg = "S"; 
+            runtime->broadcast(ctx, msg, sizeof(char), TASK_STEAL_REQUEST);
         }
       } else {
         task_profiling_t task_profile;
@@ -812,6 +846,12 @@ void AdaptiveMapper::report_profiling(const MapperContext      ctx,
       if (recursive_tasks_scheduled < max_recursive_tasks_to_schedule) {
         trigger_select_tasks_to_map(ctx);
       }
+      
+      Processor target = select_processor_by_id(local_proc.kind(), 1);
+    //  if (target != local_proc) {
+    //    char *msg = "A";
+    //    runtime->send_message(ctx, target, msg, sizeof(char), TASK_STEAL_ACK);
+    //  }
     }
     else {
       log_adapt_mapper.debug("No operation timeline for task %s", task.get_task_name());
