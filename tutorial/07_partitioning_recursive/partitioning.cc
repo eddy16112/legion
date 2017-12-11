@@ -521,7 +521,7 @@ void AdaptiveMapper::handle_message(const MapperContext ctx,
     case TASK_STEAL_REQUEST:
     {
       if (message.sender != local_proc) {
-        task_steal_request_t request = {local_proc, 1};
+        task_steal_request_t request = {local_proc, 2};
         runtime->send_message(ctx, message.sender, &request, sizeof(task_steal_request_t), TASK_STEAL_ACK);
         log_adapt_mapper.debug("%s, local_proc: %llx, received a message from proc %llx, STEAL", __FUNCTION__, local_proc.id, message.sender.id);
       }
@@ -630,7 +630,7 @@ void AdaptiveMapper::select_tasks_to_map(const MapperContext          ctx,
   } else {
     assert(task_steal_request_queue.size() > 0);
     task_steal_request_t &request = task_steal_request_queue.front();
-    for (std::list<const Task*>::const_iterator it = 
+  /*  for (std::list<const Task*>::const_iterator it = 
           input.ready_tasks.begin(); (count < max_schedule_count) && 
           (it != input.ready_tasks.end()); it++)
     {
@@ -641,7 +641,32 @@ void AdaptiveMapper::select_tasks_to_map(const MapperContext          ctx,
         task_steal_request_queue.pop_front();
         break;
       }
+    }*/
+    
+   // task_steal_request_t &request = task_steal_request_queue.front();
+    std::list<const Task*>::const_iterator task_it = input.ready_tasks.begin();
+    int ready_tasks_size = input.ready_tasks.size();
+    int num_tasks_relocate = 0;
+    while (task_steal_request_queue.size() > 0 && ready_tasks_size > 0) 
+    {
+      if (request.num_tasks <= ready_tasks_size) 
+      {
+        num_tasks_relocate = request.num_tasks;
+      } 
+      else
+      {
+        num_tasks_relocate = ready_tasks_size;
+      }
+      for (unsigned i = 0; i < num_tasks_relocate; i++) {
+        assert(task_it != input.ready_tasks.end());
+        output.relocate_tasks[*task_it] = request.target_proc;
+        task_it ++;
+      }
+      ready_tasks_size -= num_tasks_relocate;
+      task_steal_request_queue.pop_front();
+      request = task_steal_request_queue.front();
     }
+    
     select_tasks_to_map_local = true;
   }
 
