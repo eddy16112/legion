@@ -261,15 +261,6 @@ protected:
   const std::map<VariantID,Processor::Kind>& find_task_variants(
                                             MapperContext ctx, TaskID task_id);
   
-  void map_constrained_requirement(MapperContext ctx,
-      const RegionRequirement &req, MappingKind mapping_kind, 
-      const std::vector<LayoutConstraintID> &constraints,
-      std::vector<PhysicalInstance> &chosen_instances, Processor restricted);
-      
-  void map_random_requirement(MapperContext ctx,
-      const RegionRequirement &req, 
-      std::vector<PhysicalInstance> &chosen_instances, Processor restricted);
-  
   void trigger_select_tasks_to_map(const MapperContext ctx);
   
   long generate_random_integer(void) const 
@@ -280,16 +271,17 @@ protected:
                         const MapTaskInput&   input,
                               MapTaskOutput&  output);   
 
-protected:
+private:
   std::map<TaskID,std::map<VariantID,
                             Processor::Kind> > variant_processor_kinds;
-private:
+
   MapperEvent defer_select_tasks_to_map;
   int recursive_tasks_scheduled;
-  std::map<TaskID, task_profiling_t> task_profiling_history;
-  std::map<TaskID, bool> task_use_recursive;
   double task_slowdown_allowance;
   int max_recursive_tasks_to_schedule;
+  int num_tasks_per_slice;
+  std::map<TaskID, task_profiling_t> task_profiling_history;
+  std::map<TaskID, bool> task_use_recursive;
   std::set<Processor> task_steal_processor_blacklist;
   std::deque<task_steal_request_t> task_steal_request_queue;
   bool select_tasks_to_map_local;
@@ -323,6 +315,7 @@ AdaptiveMapper::AdaptiveMapper(Machine m,
   max_recursive_tasks_to_schedule = 1;
   recursive_tasks_scheduled = 0;
   select_tasks_to_map_local = true;
+  num_tasks_per_slice = 1;
   
   std::set<Processor> all_procs;
   machine.get_all_processors(all_procs);
@@ -521,7 +514,7 @@ void AdaptiveMapper::handle_message(const MapperContext ctx,
     case TASK_STEAL_REQUEST:
     {
       if (message.sender != local_proc) {
-        task_steal_request_t request = {local_proc, 1};
+        task_steal_request_t request = {local_proc, 2};
         runtime->send_message(ctx, message.sender, &request, sizeof(task_steal_request_t), TASK_STEAL_ACK);
         log_adapt_mapper.debug("%s, local_proc: %llx, received a message from proc %llx, STEAL", __FUNCTION__, local_proc.id, message.sender.id);
       }
@@ -568,6 +561,7 @@ void AdaptiveMapper::slice_task(const MapperContext      ctx,
   DefaultMapper::slice_task(ctx, task, input, output);
 #else
   log_adapt_mapper.debug("%s, local_proc: %llx", __FUNCTION__, local_proc.id);
+#if 0
   // Iterate over all the points and send them all over the world
   output.slices.resize(input.domain.get_volume());
   unsigned idx = 0;
@@ -584,6 +578,27 @@ void AdaptiveMapper::slice_task(const MapperContext      ctx,
               false/*recurse*/, true/*stealable*/);
           log_adapt_mapper.debug("index task: %p, original target proc: %llx, slice task process: %llx", &task, task.target_proc.id, proc.id);
         }
+        break;
+      }
+    default:
+      assert(false);
+  }
+#endif
+  Machine::ProcessorQuery all_procs(machine);
+  all_procs.only_kind(local_proc.kind());
+  std::vector<Processor> procs(all_procs.begin(), all_procs.end());
+  switch (input.domain.get_dim())
+  {
+    case 1:
+      {
+        DomainT<1,coord_t> point_space = input.domain;
+        Point<1,coord_t> num_points = 
+                point_space.bounds.hi - point_space.bounds.lo;
+        Point<1,coord_t> num_blocks((num_points.x+1) / num_tasks_per_slice);
+       // assert(num_blocks.x == 4);
+        DefaultMapper::default_decompose_points<1>(point_space, procs,
+                                                   num_blocks, false/*recurse*/,
+                                                   stealing_enabled, output.slices);
         break;
       }
     default:
@@ -618,7 +633,7 @@ void AdaptiveMapper::select_tasks_to_map(const MapperContext          ctx,
           continue;
         }
         // TODO: now, use a trick, slice task is sliced into 4 points, so with -ll:cpu 1, set to 4, -ll:cpu 2, set to 2.
-        recursive_tasks_scheduled +=1;
+        recursive_tasks_scheduled += num_tasks_per_slice;
         log_adapt_mapper.debug("%s, task find: %s, schedule, task_scheduled: %d, target proc: %llx", __FUNCTION__, task->get_task_name(), recursive_tasks_scheduled, task->target_proc.id);
       }
       
@@ -630,7 +645,7 @@ void AdaptiveMapper::select_tasks_to_map(const MapperContext          ctx,
   } else {
     assert(task_steal_request_queue.size() > 0);
     task_steal_request_t &request = task_steal_request_queue.front();
-    for (std::list<const Task*>::const_iterator it = 
+  /*  for (std::list<const Task*>::const_iterator it = 
           input.ready_tasks.begin(); (count < max_schedule_count) && 
           (it != input.ready_tasks.end()); it++)
     {
@@ -641,7 +656,32 @@ void AdaptiveMapper::select_tasks_to_map(const MapperContext          ctx,
         task_steal_request_queue.pop_front();
         break;
       }
+    }*/
+    
+   // task_steal_request_t &request = task_steal_request_queue.front();
+    std::list<const Task*>::const_iterator task_it = input.ready_tasks.begin();
+    unsigned ready_tasks_size = input.ready_tasks.size();
+    unsigned num_tasks_relocate = 0;
+    while (task_steal_request_queue.size() > 0 && ready_tasks_size > 0) 
+    {
+      if (request.num_tasks <= ready_tasks_size) 
+      {
+        num_tasks_relocate = request.num_tasks;
+      } 
+      else
+      {
+        num_tasks_relocate = ready_tasks_size;
+      }
+      for (unsigned i = 0; i < num_tasks_relocate; i++) {
+        assert(task_it != input.ready_tasks.end());
+        output.relocate_tasks[*task_it] = request.target_proc;
+        task_it ++;
+      }
+      ready_tasks_size -= num_tasks_relocate;
+      task_steal_request_queue.pop_front();
+      request = task_steal_request_queue.front();
     }
+    
     select_tasks_to_map_local = true;
   }
 
@@ -758,46 +798,6 @@ void AdaptiveMapper::report_profiling(const MapperContext      ctx,
   // check the result of calls to get_measurement (or just call has_measurement
   // first).  Also, the call returns a copy of the result that you must delete
   // yourself.
-  /*
-  OperationStatus *status = 
-    input.profiling_responses.get_measurement<OperationStatus>();
-  if (status)
-  {
-    switch (status->result)
-    {
-      case OperationStatus::COMPLETED_SUCCESSFULLY:
-        {
-          printf("Task %s COMPLETED SUCCESSFULLY\n", task.get_task_name());
-          break;
-        }
-      case OperationStatus::COMPLETED_WITH_ERRORS:
-        {
-          printf("Task %s COMPLETED WITH ERRORS\n", task.get_task_name());
-          break;
-        }
-      case OperationStatus::INTERRUPT_REQUESTED:
-        {
-          printf("Task %s was INTERRUPTED\n", task.get_task_name());
-          break;
-        }
-      case OperationStatus::TERMINATED_EARLY:
-        {
-          printf("Task %s TERMINATED EARLY\n", task.get_task_name());
-          break;
-        }
-      case OperationStatus::CANCELLED:
-        {
-          printf("Task %s was CANCELLED\n", task.get_task_name());
-          break;
-        }
-      default:
-        assert(false); // shouldn't get any of the rest currently
-    }
-    delete status;
-  }
-  else
-    printf("No operation status for task %s\n", task.get_task_name());*/
-
   if (RecursiveTaskArgument::is_task_recursiveable(&task)) {
     OperationTimeline *timeline =
       input.profiling_responses.get_measurement<OperationTimeline>();
@@ -817,7 +817,7 @@ void AdaptiveMapper::report_profiling(const MapperContext      ctx,
         task_profile.duration = timeline->end_time - timeline->start_time;
         task_profiling_history[task.task_id] = task_profile;
         if (task_profile.duration / task_previous_profile.duration > task_slowdown_allowance) {
-           // task_use_recursive[task.task_id] = true;
+        //    task_use_recursive[task.task_id] = true;
             char *msg = "S"; 
             runtime->broadcast(ctx, msg, sizeof(char), TASK_STEAL_REQUEST);
         }
@@ -832,16 +832,14 @@ void AdaptiveMapper::report_profiling(const MapperContext      ctx,
       if (parent_task != NULL) {
         parent_task_name = (char*)parent_task->get_task_name();
       }
-      int is_recursive_task_int = 0;
-      if (is_recursive_task) {
-        is_recursive_task_int = 1;
-      }
-      log_adapt_mapper.debug("%s, task: %s: ready=%lld start=%lld stop=%lld duration=%lld, parent: %s, is_recursive_task %d",
+
+      log_adapt_mapper.debug("%s, task: %s: local_proc: %llx, ready=%lld start=%lld stop=%lld duration=%lld, parent: %s, is_recursive_task %d",
        __FUNCTION__,
   	   task.get_task_name(),
+       local_proc.id,
   	   timeline->ready_time,
   	   timeline->start_time,
-  	   timeline->end_time, timeline->end_time - timeline->start_time, parent_task_name, is_recursive_task_int);
+  	   timeline->end_time, timeline->end_time - timeline->start_time, parent_task_name, is_recursive_task);
       delete timeline;
       if (recursive_tasks_scheduled < max_recursive_tasks_to_schedule) {
         trigger_select_tasks_to_map(ctx);
@@ -900,118 +898,6 @@ const std::map<VariantID,Processor::Kind>& AdaptiveMapper::find_task_variants(
     variant_processor_kinds[task_id];
   result = kinds;
   return result;
-}
-
-//--------------------------------------------------------------------------
-void AdaptiveMapper::map_constrained_requirement(MapperContext ctx,
-    const RegionRequirement &req, MappingKind mapping_kind, 
-    const std::vector<LayoutConstraintID> &constraints,
-    std::vector<PhysicalInstance> &chosen_instances, Processor restricted) 
-//--------------------------------------------------------------------------
-{
-  chosen_instances.resize(constraints.size());
-  unsigned output_idx = 0;
-  for (std::vector<LayoutConstraintID>::const_iterator lay_it = 
-        constraints.begin(); lay_it != 
-        constraints.end(); lay_it++, output_idx++)
-  {
-    const LayoutConstraintSet &layout_constraints = 
-      runtime->find_layout_constraints(ctx, *lay_it);
-    // TODO: explore the constraints in more detail and exploit randomness
-    // We'll use the default mapper to fill in any constraint holes for now
-    Machine::MemoryQuery all_memories(machine);
-    if (restricted.exists())
-      all_memories.has_affinity_to(restricted);
-    // This could be a big data structure in a big machine
-    std::map<unsigned,Memory> random_memories;
-    for (Machine::MemoryQuery::iterator it = all_memories.begin();
-          it != all_memories.end(); it++)
-    {
-      random_memories[generate_random_integer()] = *it;
-    }
-    bool made_instance = false;
-    while (!random_memories.empty())
-    {
-      std::map<unsigned,Memory>::iterator it = random_memories.begin();
-      Memory target = it->second;
-      random_memories.erase(it);
-      if (target.capacity() == 0)
-        continue;
-      if (default_make_instance(ctx, target, layout_constraints,
-            chosen_instances[output_idx], mapping_kind, 
-            true/*force new*/, false/*meets*/, req))
-      {
-        made_instance = true;
-        break;
-      }
-    }
-    if (!made_instance)
-    {
-      printf("Test mapper %s ran out of memory",
-                            get_mapper_name());
-      assert(false);
-    }
-  }
-}
-
-//--------------------------------------------------------------------------
-void AdaptiveMapper::map_random_requirement(MapperContext ctx,
-    const RegionRequirement &req, 
-    std::vector<PhysicalInstance> &chosen_instances, Processor restricted)
-//--------------------------------------------------------------------------
-{
-  
-  std::vector<LogicalRegion> regions(1, req.region);
-  chosen_instances.resize(req.privilege_fields.size());
-  unsigned output_idx = 0;
-  // Iterate over all the fields and make a separate instance and
-  // put it in random places
-  for (std::set<FieldID>::const_iterator it = req.privilege_fields.begin();
-        it != req.privilege_fields.end(); it++, output_idx++)
-  {
-    std::vector<FieldID> field(1, *it);
-    // Try a bunch of memories in a random order until we find one 
-    // that succeeds
-    Machine::MemoryQuery all_memories(machine);
-    if (restricted.exists())
-      all_memories.has_affinity_to(restricted);
-    // This could be a big data structure in a big machine
-    std::map<unsigned,Memory> random_memories;
-    for (Machine::MemoryQuery::iterator it = all_memories.begin();
-          it != all_memories.end(); it++)
-    {
-      random_memories[generate_random_integer()] = *it;
-    }
-    bool made_instance = false;
-    while (!random_memories.empty())
-    {
-      std::map<unsigned,Memory>::iterator it = random_memories.begin();
-      Memory target = it->second;
-      random_memories.erase(it);
-      if (target.capacity() == 0)
-        continue;
-      // TODO: put in arbitrary constraints to mess with the DMA system
-      LayoutConstraintSet constraints;
-      default_policy_select_constraints(ctx, constraints, target, req);
-      // Overwrite the field constraints 
-      constraints.field_constraint = FieldConstraint(field, false);
-      // Try to make the instance, we always make new instances to
-      // generate as much data movement and dependence analysis as
-      // we possibly can, it will also stress the garbage collector
-      if (runtime->create_physical_instance(ctx, target, constraints,
-                               regions, chosen_instances[output_idx]))
-      {
-        made_instance = true;
-        break;
-      }
-    }
-    if (!made_instance)
-    {
-      printf("Test mapper %s ran out of memory",
-                            get_mapper_name());
-      assert(false);
-    }
-  }
 }
 
 //--------------------------------------------------------------------------
@@ -1299,15 +1185,17 @@ void top_level_task(const Task *task,
                     Context ctx, Runtime *runtime)
 {
   int num_elements = 1024; 
+  int num_subregions = 4;
   {
     const InputArgs &command_args = Runtime::get_input_args();
     for (int i = 1; i < command_args.argc; i++)
     {
       if (!strcmp(command_args.argv[i],"-n"))
         num_elements = atoi(command_args.argv[++i]);
+      if (!strcmp(command_args.argv[i],"-b"))
+        num_subregions = atoi(command_args.argv[++i]);
     }
   }
-  int num_subregions = 4;
 
   printf("Running daxpy for %d elements...\n", num_elements);
   printf("Partitioning data into %d sub-regions...\n", num_subregions);
@@ -1443,8 +1331,6 @@ void daxpy_task(const Task *task,
     is_recursive_task = 1;
   }
   
-  if (point == 1 && is_recursive_task == 0) sleep(5);
-  
   char hostname[1024];
   hostname[1023] = '\0';
   gethostname(hostname, 1023);
@@ -1454,6 +1340,7 @@ void daxpy_task(const Task *task,
   printf("Running daxpy computation with alpha %.8g for point %d size %d, is_recursive_task %d, host %s, thread %lld, current_proc %llx, target_proc %llx\n", 
           alpha, point, size, is_recursive_task, hostname, self, task->current_proc.id, task->target_proc.id);
 
+  if (point == 1 && is_recursive_task == 0) sleep(5);
   for (PointInRectIterator<1> pir(rect); pir(); pir++)
     acc_z[*pir] = alpha * acc_x[*pir] + acc_y[*pir];
   
