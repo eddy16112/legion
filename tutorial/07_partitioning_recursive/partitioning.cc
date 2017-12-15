@@ -298,6 +298,7 @@ void mapper_registration(Machine machine, Runtime *rt,
                           const std::set<Processor> &local_procs)
 {
   RecursiveTaskMapperShared *mapper_shared = new RecursiveTaskMapperShared();
+  printf("local procs size %d\n", local_procs.size());
   for (std::set<Processor>::const_iterator it = local_procs.begin();
         it != local_procs.end(); it++)
   {
@@ -771,13 +772,12 @@ void AdaptiveMapper::select_steal_targets(const MapperContext         ctx,
   Processor target = select_stealable_processor(local_proc.kind());
   //Processor target = select_processor_by_id(local_proc.kind(), 1);
   if (target != local_proc) {
-    log_adapt_mapper.debug("************* local_proc %llx, select target, blacklist size %d", local_proc.id, task_stealable_processor_list.size());
-  }
-  if ((target != local_proc)) {
    // output.targets.insert(target);
     task_steal_request_t request = {local_proc, 1};
     runtime->send_message(ctx, target, &request, sizeof(task_steal_request_t), TASK_STEAL_CONTINUE);
-    log_adapt_mapper.debug("%s, local_proc: %llx, steal target %llx\n", __FUNCTION__, local_proc.id, target.id);
+    log_adapt_mapper.debug("%s, local_proc: %llx, steal target %llx, stealable_list size %d", 
+                           __FUNCTION__, local_proc.id, target.id,
+                           task_stealable_processor_list.size());
     //assert(0);
   }
 }
