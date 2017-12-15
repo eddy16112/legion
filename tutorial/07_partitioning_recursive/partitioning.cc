@@ -53,7 +53,7 @@ enum {
 typedef enum {
   TASK_STEAL_REQUEST = 1,
   TASK_STEAL_ACK,
-  POOL_WORKER_STEAL_ACK,
+  TASK_STEAL_CONTINUE,
   POOL_POOL_FORWARD_STEAL_SUCCESS,
   POOL_WORKER_STEAL_NACK,
   POOL_WORKER_WAKEUP,
@@ -514,6 +514,11 @@ void AdaptiveMapper::handle_message(const MapperContext ctx,
     case TASK_STEAL_REQUEST:
     {
       if (message.sender != local_proc) {
+        std::set<Processor>::iterator it;
+        it = task_steal_processor_blacklist.find(message.sender);
+        if (it != task_steal_processor_blacklist.end()) {
+          task_steal_processor_blacklist.erase(it);
+        }
         task_steal_request_t request = {local_proc, 2};
         runtime->send_message(ctx, message.sender, &request, sizeof(task_steal_request_t), TASK_STEAL_ACK);
         log_adapt_mapper.debug("%s, local_proc: %llx, received a message from proc %llx, STEAL", __FUNCTION__, local_proc.id, message.sender.id);
@@ -527,6 +532,15 @@ void AdaptiveMapper::handle_message(const MapperContext ctx,
       task_steal_request_queue.push_back(request);
       trigger_select_tasks_to_map(ctx);
       log_adapt_mapper.debug("%s, local_proc: %llx, received a message from proc %llx, ACK", __FUNCTION__, local_proc.id, message.sender.id);
+      break;
+    }
+    case TASK_STEAL_CONTINUE:
+    {
+      select_tasks_to_map_local = false;
+      task_steal_request_t request = *(task_steal_request_t*)message.message;
+      task_steal_request_queue.push_back(request);
+      trigger_select_tasks_to_map(ctx);
+      log_adapt_mapper.debug("%s, local_proc: %llx, received a message from proc %llx, CONTINUE", __FUNCTION__, local_proc.id, message.sender.id);
       break;
     }
     default: assert(false);
@@ -561,7 +575,6 @@ void AdaptiveMapper::slice_task(const MapperContext      ctx,
   DefaultMapper::slice_task(ctx, task, input, output);
 #else
   log_adapt_mapper.debug("%s, local_proc: %llx", __FUNCTION__, local_proc.id);
-#if 0
   // Iterate over all the points and send them all over the world
   output.slices.resize(input.domain.get_volume());
   unsigned idx = 0;
@@ -583,7 +596,7 @@ void AdaptiveMapper::slice_task(const MapperContext      ctx,
     default:
       assert(false);
   }
-#endif
+#if 0
   Machine::ProcessorQuery all_procs(machine);
   all_procs.only_kind(local_proc.kind());
   std::vector<Processor> procs(all_procs.begin(), all_procs.end());
@@ -604,6 +617,7 @@ void AdaptiveMapper::slice_task(const MapperContext      ctx,
     default:
       assert(false);
   }
+#endif
 #endif
 }                                         
 
@@ -761,7 +775,9 @@ void AdaptiveMapper::select_steal_targets(const MapperContext         ctx,
   }
   if ((target != local_proc) && 
       (task_steal_processor_blacklist.find(target) == task_steal_processor_blacklist.end())) {
-    output.targets.insert(target);
+   // output.targets.insert(target);
+    task_steal_request_t request = {local_proc, 1};
+    runtime->send_message(ctx, target, &request, sizeof(task_steal_request_t), TASK_STEAL_CONTINUE);
     log_adapt_mapper.debug("%s, local_proc: %llx, steal target %llx\n", __FUNCTION__, local_proc.id, target.id);
     //assert(0);
   }
