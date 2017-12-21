@@ -289,6 +289,9 @@ private:
   bool select_tasks_to_map_local;
   bool slow_down_mapper;
   
+  int num_ready_tasks;
+  int min_ready_tasks_to_enable_steal;
+  
 };
 
 static LegionRuntime::Logger::Category log_adapt_mapper("adapt_mapper");
@@ -302,6 +305,10 @@ void mapper_registration(Machine machine, Runtime *rt,
   for (std::set<Processor>::const_iterator it = local_procs.begin();
         it != local_procs.end(); it++)
   {
+    long long proc_id = (*it).id;
+    unsigned node_id = proc_id >> 40;
+    unsigned pid = proc_id & 0xffffffffff;
+    printf("proc id %llx, node %x, proc %x\n", proc_id, node_id, pid);
     rt->replace_default_mapper(
         new AdaptiveMapper(machine, rt, *it, mapper_shared), *it);
   }
@@ -316,12 +323,15 @@ AdaptiveMapper::AdaptiveMapper(Machine m,
 {
   // init
   task_slowdown_allowance = 2;
-  max_recursive_tasks_to_schedule = 1;
+  max_recursive_tasks_to_schedule = 4;
   recursive_tasks_scheduled = 0;
   select_tasks_to_map_local = true;
   num_tasks_per_slice = 1;
   task_stealable_processor_list.clear();
   slow_down_mapper = false;
+  
+  num_ready_tasks = 0;
+  min_ready_tasks_to_enable_steal = 2;
   
   std::set<Processor> all_procs;
   machine.get_all_processors(all_procs);
@@ -515,8 +525,10 @@ void AdaptiveMapper::handle_message(const MapperContext ctx,
         if (it == task_stealable_processor_list.end()) {
           task_stealable_processor_list.insert(message.sender);
         }
-        task_steal_request_t request = {local_proc, 2};
-        runtime->send_message(ctx, message.sender, &request, sizeof(task_steal_request_t), TASK_STEAL_ACK);
+    //    if (num_ready_tasks >= min_ready_tasks_to_enable_steal) {
+          task_steal_request_t request = {local_proc, 4};
+          runtime->send_message(ctx, message.sender, &request, sizeof(task_steal_request_t), TASK_STEAL_ACK);
+      //  }
         log_adapt_mapper.debug("%s, local_proc: %llx, received a message from proc %llx, STEAL", __FUNCTION__, local_proc.id, message.sender.id);
       }
       break;
@@ -570,6 +582,7 @@ void AdaptiveMapper::slice_task(const MapperContext      ctx,
 #if defined USE_DEFAULT
   DefaultMapper::slice_task(ctx, task, input, output);
 #else
+#if 0
   log_adapt_mapper.debug("%s, local_proc: %llx", __FUNCTION__, local_proc.id);
   // Iterate over all the points and send them all over the world
   output.slices.resize(input.domain.get_volume());
@@ -592,7 +605,8 @@ void AdaptiveMapper::slice_task(const MapperContext      ctx,
     default:
       assert(false);
   }
-#if 0
+#endif
+  //#if 0
   Machine::ProcessorQuery all_procs(machine);
   all_procs.only_kind(local_proc.kind());
   std::vector<Processor> procs(all_procs.begin(), all_procs.end());
@@ -613,7 +627,7 @@ void AdaptiveMapper::slice_task(const MapperContext      ctx,
     default:
       assert(false);
   }
-#endif
+  //#endif
 #endif
 }                                         
 
@@ -635,8 +649,6 @@ void AdaptiveMapper::select_tasks_to_map(const MapperContext          ctx,
     {
       const Task *task = *it; 
       if (RecursiveTaskArgument::is_task_recursiveable(task)) {
-        // first, if there is task steal request, let's 
-        
         if (recursive_tasks_scheduled >= max_recursive_tasks_to_schedule) {
           log_adapt_mapper.debug("%s, task find: %s, but not schedule, task_scheduled: %d", __FUNCTION__, task->get_task_name(), recursive_tasks_scheduled);
 
@@ -648,10 +660,9 @@ void AdaptiveMapper::select_tasks_to_map(const MapperContext          ctx,
       }
       
       output.map_tasks.insert(*it);
-      //Processor target = select_processor_by_id(local_proc.kind(), 0);
-      //output.relocate_tasks[*it] = target;
       count++;
     }
+    num_ready_tasks = input.ready_tasks.size() - count;
   } else {
     log_adapt_mapper.debug("%s, relocate_task, local_proc: %llx, ready_tasks size: %ld", __FUNCTION__, local_proc.id, input.ready_tasks.size());
     assert(task_steal_request_queue.size() > 0);
@@ -694,6 +705,8 @@ void AdaptiveMapper::select_tasks_to_map(const MapperContext          ctx,
     }
     
     select_tasks_to_map_local = true;
+    
+    num_ready_tasks = input.ready_tasks.size();
   }
 
   if (!defer_select_tasks_to_map.exists()) {
@@ -766,7 +779,7 @@ void AdaptiveMapper::select_steal_targets(const MapperContext         ctx,
 //--------------------------------------------------------------------------
 {
  // Always send a steal request
-  if (task_stealable_processor_list.size() == 0 || slow_down_mapper == true) {
+  if (task_stealable_processor_list.size() == 0 || slow_down_mapper == true || num_ready_tasks >= min_ready_tasks_to_enable_steal) {
     return;
   }
   Processor target = select_stealable_processor(local_proc.kind());
@@ -775,9 +788,9 @@ void AdaptiveMapper::select_steal_targets(const MapperContext         ctx,
    // output.targets.insert(target);
     task_steal_request_t request = {local_proc, 1};
     runtime->send_message(ctx, target, &request, sizeof(task_steal_request_t), TASK_STEAL_CONTINUE);
-    log_adapt_mapper.debug("%s, local_proc: %llx, steal target %llx, stealable_list size %d", 
+    log_adapt_mapper.debug("%s, local_proc: %llx, steal target %llx, stealable_list size %d, ready_tasks %d", 
                            __FUNCTION__, local_proc.id, target.id,
-                           task_stealable_processor_list.size());
+                           task_stealable_processor_list.size(), num_ready_tasks);
     //assert(0);
   }
 }
@@ -832,7 +845,7 @@ void AdaptiveMapper::report_profiling(const MapperContext      ctx,
         task_profile.duration = timeline->end_time - timeline->start_time;
         task_profiling_history[task.task_id] = task_profile;
         if (task_profile.duration / task_previous_profile.duration > task_slowdown_allowance) {
-         //  task_use_recursive[task.task_id] = true;
+          //  task_use_recursive[task.task_id] = true;
             if(slow_down_mapper == false) { 
               char *msg = "S"; 
               runtime->broadcast(ctx, msg, sizeof(char), TASK_STEAL_REQUEST);
