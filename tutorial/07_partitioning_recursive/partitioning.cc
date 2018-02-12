@@ -326,7 +326,7 @@ AdaptiveMapper::AdaptiveMapper(Machine m,
   max_recursive_tasks_to_schedule = 1;
   recursive_tasks_scheduled = 0;
   select_tasks_to_map_local = true;
-  num_tasks_per_slice = 1;
+  num_tasks_per_slice = 2;
   task_stealable_processor_list.clear();
   slow_down_mapper = false;
   
@@ -847,7 +847,7 @@ void AdaptiveMapper::report_profiling(const MapperContext      ctx,
         task_profile.duration = timeline->end_time - timeline->start_time;
         task_profiling_history[task.task_id] = task_profile;
         if (task_profile.duration / task_previous_profile.duration > task_slowdown_allowance) {
-          //  task_use_recursive[task.task_id] = true;
+            task_use_recursive[task.task_id] = true;
             if(slow_down_mapper == false) { 
               char *msg = "S"; 
               runtime->broadcast(ctx, msg, sizeof(char), TASK_STEAL_REQUEST);
@@ -879,7 +879,7 @@ void AdaptiveMapper::report_profiling(const MapperContext      ctx,
         trigger_select_tasks_to_map(ctx);
       }
       
-      Processor target = select_processor_by_id(local_proc.kind(), 1);
+     // Processor target = select_processor_by_id(local_proc.kind(), 1);
     //  if (target != local_proc) {
     //    char *msg = "A";
     //    runtime->send_message(ctx, target, msg, sizeof(char), TASK_STEAL_ACK);
