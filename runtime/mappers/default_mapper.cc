@@ -337,7 +337,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       // Default mapper operates with the serialized re-entrant sync model
-      return SERIALIZED_REENTRANT_MAPPER_MODEL;
+      return SERIALIZED_NON_REENTRANT_MAPPER_MODEL;
     }
 
     //--------------------------------------------------------------------------

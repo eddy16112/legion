@@ -323,10 +323,10 @@ AdaptiveMapper::AdaptiveMapper(Machine m,
 {
   // init
   task_slowdown_allowance = 2;
-  max_recursive_tasks_to_schedule = 2;
+  max_recursive_tasks_to_schedule = 1;
   recursive_tasks_scheduled = 0;
   select_tasks_to_map_local = true;
-  num_tasks_per_slice = 1;
+  num_tasks_per_slice = 2;
   task_stealable_processor_list.clear();
   slow_down_mapper = false;
   
@@ -649,11 +649,10 @@ void AdaptiveMapper::select_tasks_to_map(const MapperContext          ctx,
   {
     log_adapt_mapper.debug("%s, select_task, local_proc: %llx, ready_tasks size: %ld", __FUNCTION__, local_proc.id, input.ready_tasks.size());
     for (std::list<const Task*>::const_iterator it = 
-          input.ready_tasks.begin(); (recursive_tasks_scheduled < max_recursive_tasks_to_schedule) && 
+          input.ready_tasks.begin(); (count < max_schedule_count) && 
           (it != input.ready_tasks.end()); it++)
     {
       const Task *task = *it; 
-			/*
       if (RecursiveTaskArgument::is_task_recursiveable(task)) {
         if (recursive_tasks_scheduled >= max_recursive_tasks_to_schedule) {
           log_adapt_mapper.debug("%s, task find: %s, but not schedule, task_scheduled: %d", __FUNCTION__, task->get_task_name(), recursive_tasks_scheduled);
@@ -663,12 +662,7 @@ void AdaptiveMapper::select_tasks_to_map(const MapperContext          ctx,
         // TODO: now, use a trick, slice task is sliced into 4 points, so with -ll:cpu 1, set to 4, -ll:cpu 2, set to 2.
         recursive_tasks_scheduled += num_tasks_per_slice;
         log_adapt_mapper.debug("%s, task find: %s, schedule, task_scheduled: %d, target proc: %llx", __FUNCTION__, task->get_task_name(), recursive_tasks_scheduled, task->target_proc.id);
-      }*/
-			if (task->is_index_space) {
-				recursive_tasks_scheduled += num_tasks_per_slice;
-			} else {
-				recursive_tasks_scheduled += 1;
-			}
+      }
       
       output.map_tasks.insert(*it);
       count++;
@@ -834,15 +828,14 @@ void AdaptiveMapper::report_profiling(const MapperContext      ctx,
   // check the result of calls to get_measurement (or just call has_measurement
   // first).  Also, the call returns a copy of the result that you must delete
   // yourself.
-	recursive_tasks_scheduled --;
-	assert(recursive_tasks_scheduled >= 0);
   if (RecursiveTaskArgument::is_task_recursiveable(&task)) {
     OperationTimeline *timeline =
       input.profiling_responses.get_measurement<OperationTimeline>();
     if (timeline)
     {
-      
+      recursive_tasks_scheduled --;
     //  if (recursive_tasks_scheduled < 0) recursive_tasks_scheduled = 0;
+      assert(recursive_tasks_scheduled >= 0);
       bool is_recursive_task = RecursiveTaskArgument::is_task_recursive_task(&task);
       // find the profiling history of task
       std::map<TaskID, task_profiling_t>::iterator it;
@@ -854,7 +847,7 @@ void AdaptiveMapper::report_profiling(const MapperContext      ctx,
         task_profile.duration = timeline->end_time - timeline->start_time;
         task_profiling_history[task.task_id] = task_profile;
         if (task_profile.duration / task_previous_profile.duration > task_slowdown_allowance) {
-       //     task_use_recursive[task.task_id] = true;
+            task_use_recursive[task.task_id] = true;
             if(slow_down_mapper == false) { 
               char *msg = "S"; 
               runtime->broadcast(ctx, msg, sizeof(char), TASK_STEAL_REQUEST);
@@ -882,6 +875,9 @@ void AdaptiveMapper::report_profiling(const MapperContext      ctx,
   	   timeline->start_time,
   	   timeline->end_time, timeline->end_time - timeline->start_time, parent_task_name, is_recursive_task);
       delete timeline;
+      if (recursive_tasks_scheduled < max_recursive_tasks_to_schedule) {
+        trigger_select_tasks_to_map(ctx);
+      }
       
      // Processor target = select_processor_by_id(local_proc.kind(), 1);
     //  if (target != local_proc) {
@@ -892,9 +888,6 @@ void AdaptiveMapper::report_profiling(const MapperContext      ctx,
     else {
       log_adapt_mapper.debug("No operation timeline for task %s", task.get_task_name());
     }
-  }
-  if (recursive_tasks_scheduled < max_recursive_tasks_to_schedule) {
-    trigger_select_tasks_to_map(ctx);
   }
 
 }
