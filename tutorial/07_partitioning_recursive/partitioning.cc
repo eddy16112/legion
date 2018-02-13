@@ -223,6 +223,9 @@ public:
   AdaptiveMapper(Machine machine, 
       Runtime *rt, Processor local, RecursiveTaskMapperShared *shared);
 public:
+	MapperSyncModel get_mapper_sync_model(void) const {
+	    return SERIALIZED_NON_REENTRANT_MAPPER_MODEL;
+	}
   virtual void handle_message(const MapperContext  ctx,
                               const MapperMessage& message);
                               
@@ -287,6 +290,7 @@ private:
   std::set<Processor> task_stealable_processor_list;
   std::deque<task_steal_request_t> task_steal_request_queue;
   bool select_tasks_to_map_local;
+	bool select_tasks_to_map_relocate;
   bool slow_down_mapper;
   
   int num_ready_tasks;
@@ -326,6 +330,7 @@ AdaptiveMapper::AdaptiveMapper(Machine m,
   max_recursive_tasks_to_schedule = 2;
   recursive_tasks_scheduled = 0;
   select_tasks_to_map_local = true;
+	select_tasks_to_map_relocate = false;
   num_tasks_per_slice = 1;
   task_stealable_processor_list.clear();
   slow_down_mapper = false;
@@ -535,7 +540,7 @@ void AdaptiveMapper::handle_message(const MapperContext ctx,
     }
     case TASK_STEAL_ACK:
     {
-      select_tasks_to_map_local = false;
+      select_tasks_to_map_relocate = true;
       task_steal_request_t request = *(task_steal_request_t*)message.message;
       task_steal_request_queue.push_back(request);
       trigger_select_tasks_to_map(ctx);
@@ -544,7 +549,7 @@ void AdaptiveMapper::handle_message(const MapperContext ctx,
     }
     case TASK_STEAL_CONTINUE:
     {
-      select_tasks_to_map_local = false;
+			select_tasks_to_map_relocate = true;
       task_steal_request_t request = *(task_steal_request_t*)message.message;
       task_steal_request_queue.push_back(request);
       trigger_select_tasks_to_map(ctx);
@@ -644,15 +649,45 @@ void AdaptiveMapper::select_tasks_to_map(const MapperContext          ctx,
 {
   
   unsigned count = 0;
+	
+	std::list<const Task*>::const_iterator task_it = input.ready_tasks.begin();
+	unsigned ready_tasks_size = input.ready_tasks.size();
   
-  if (select_tasks_to_map_local == true)
+	if (select_tasks_to_map_relocate == true)
+	{
+    log_adapt_mapper.debug("%s, relocate_task, local_proc: %llx, ready_tasks size: %ld", __FUNCTION__, local_proc.id, input.ready_tasks.size());
+   // printf("relocate_task, local_proc: %llx, ready_tasks size: %ld\n", local_proc.id, input.ready_tasks.size());
+    assert(task_steal_request_queue.size() > 0);
+    task_steal_request_t &request = task_steal_request_queue.front();
+    unsigned num_tasks_relocate = 0;
+    while (task_steal_request_queue.size() > 0 && ready_tasks_size > 0) 
+    {
+      if (request.num_tasks <= ready_tasks_size) 
+      {
+        num_tasks_relocate = request.num_tasks;
+      } 
+      else
+      {
+        num_tasks_relocate = ready_tasks_size;
+      }
+      for (unsigned i = 0; i < num_tasks_relocate; i++) {
+        assert(task_it != input.ready_tasks.end());
+				output.relocate_tasks[*task_it] = request.target_proc; 
+        task_it ++;
+      }
+      ready_tasks_size -= num_tasks_relocate;
+      task_steal_request_queue.pop_front();
+      request = task_steal_request_queue.front();
+    }
+    
+    select_tasks_to_map_relocate = false;	
+	}
   {
     log_adapt_mapper.debug("%s, select_task, local_proc: %llx, ready_tasks size: %ld", __FUNCTION__, local_proc.id, input.ready_tasks.size());
-    for (std::list<const Task*>::const_iterator it = 
-          input.ready_tasks.begin(); (recursive_tasks_scheduled < max_recursive_tasks_to_schedule) && 
-          (it != input.ready_tasks.end()); it++)
+    while((recursive_tasks_scheduled < max_recursive_tasks_to_schedule) && 
+          (ready_tasks_size > 0))
     {
-      const Task *task = *it; 
+      const Task *task = *task_it; 
 			/*
       if (RecursiveTaskArgument::is_task_recursiveable(task)) {
         if (recursive_tasks_scheduled >= max_recursive_tasks_to_schedule) {
@@ -670,52 +705,13 @@ void AdaptiveMapper::select_tasks_to_map(const MapperContext          ctx,
 				recursive_tasks_scheduled += 1;
 			}
       
-      output.map_tasks.insert(*it);
+      output.map_tasks.insert(*task_it);
+			task_it ++;
+			ready_tasks_size --;
       count++;
     }
     num_ready_tasks = input.ready_tasks.size() - count;
-  } else {
-    log_adapt_mapper.debug("%s, relocate_task, local_proc: %llx, ready_tasks size: %ld", __FUNCTION__, local_proc.id, input.ready_tasks.size());
-   // printf("relocate_task, local_proc: %llx, ready_tasks size: %ld\n", local_proc.id, input.ready_tasks.size());
-    assert(task_steal_request_queue.size() > 0);
-    task_steal_request_t &request = task_steal_request_queue.front();
-    std::list<const Task*>::const_iterator task_it = input.ready_tasks.begin();
-    unsigned ready_tasks_size = input.ready_tasks.size();
-    unsigned num_tasks_relocate = 0;
-    while (task_steal_request_queue.size() > 0 && ready_tasks_size > 0) 
-    {
-      if (request.num_tasks <= ready_tasks_size) 
-      {
-        num_tasks_relocate = request.num_tasks;
-      } 
-      else
-      {
-        num_tasks_relocate = ready_tasks_size;
-      }
-      for (unsigned i = 0; i < num_tasks_relocate; i++) {
-        assert(task_it != input.ready_tasks.end());
-        if (!RecursiveTaskArgument::is_task_recursiveable(*task_it)) 
-        {
-            printf("reloate task id %d, local %llx, target %llx\n", (*task_it)->task_id, local_proc.id, request.target_proc.id);
-         // assert(0);
-      //      output.map_tasks.insert(*task_it);
-            output.relocate_tasks[*task_it] = request.target_proc;
-        } 
-        else
-        {
-          output.relocate_tasks[*task_it] = request.target_proc;
-        } 
-        task_it ++;
-      }
-      ready_tasks_size -= num_tasks_relocate;
-      task_steal_request_queue.pop_front();
-      request = task_steal_request_queue.front();
-    }
-    
-    select_tasks_to_map_local = true;
-    
-    num_ready_tasks = input.ready_tasks.size();
-  }
+  } 
 
   if (!defer_select_tasks_to_map.exists()) {
     defer_select_tasks_to_map = runtime->create_mapper_event(ctx);
