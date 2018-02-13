@@ -223,6 +223,9 @@ public:
   AdaptiveMapper(Machine machine, 
       Runtime *rt, Processor local, RecursiveTaskMapperShared *shared);
 public:
+	MapperSyncModel get_mapper_sync_model(void) const {
+	    return SERIALIZED_NON_REENTRANT_MAPPER_MODEL;
+	}
   virtual void handle_message(const MapperContext  ctx,
                               const MapperMessage& message);
                               
