@@ -669,17 +669,7 @@ void AdaptiveMapper::select_tasks_to_map(const MapperContext          ctx,
       }
       for (unsigned i = 0; i < num_tasks_relocate; i++) {
         assert(task_it != input.ready_tasks.end());
-        if (!RecursiveTaskArgument::is_task_recursiveable(*task_it)) 
-        {
-            printf("reloate task id %d, local %llx, target %llx\n", (*task_it)->task_id, local_proc.id, request.target_proc.id);
-         // assert(0);
-      //      output.map_tasks.insert(*task_it);
-            output.relocate_tasks[*task_it] = request.target_proc;
-        } 
-        else
-        {
-          output.relocate_tasks[*task_it] = request.target_proc;
-        } 
+				output.relocate_tasks[*task_it] = request.target_proc; 
         task_it ++;
       }
       ready_tasks_size -= num_tasks_relocate;
