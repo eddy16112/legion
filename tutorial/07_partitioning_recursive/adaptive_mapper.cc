@@ -331,7 +331,7 @@ void AdaptiveMapper::handle_message(const MapperContext ctx,
         if (it == task_stealable_processor_list.end()) {
           task_stealable_processor_list.insert(message.sender);
         }
-        if (num_ready_tasks <= min_ready_tasks_to_enable_steal) {
+        if (num_ready_tasks <= min_ready_tasks_to_enable_steal && slow_down_mapper == false) {
           task_steal_request_t request = {local_proc, 2};
           runtime->send_message(ctx, message.sender, &request, sizeof(task_steal_request_t), TASK_STEAL_ACK);
           log_adapt_mapper.debug("%s, local_proc: %llx, received a message from proc %llx, num_ready_tasks %d, STEAL", __FUNCTION__, local_proc.id, message.sender.id, num_ready_tasks);
