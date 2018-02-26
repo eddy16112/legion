@@ -1,5 +1,16 @@
 #include "adaptive_mapper.h"
 
+int is_slow_down_proc(unsigned long long proc_id)
+{
+	unsigned long long slow_down_proc_id_1 = 0x1d00000000000003;
+	unsigned long long slow_down_proc_id_2 = 0x1d00000000000004;
+	if (proc_id == slow_down_proc_id_1 || proc_id == slow_down_proc_id_2) {
+		return 1;
+	} else {
+		return 0;
+	}
+}
+
 static LegionRuntime::Logger::Category log_adapt_mapper("adapt_mapper");
 
 RecursiveTaskArgument::RecursiveTaskArgument(const void *usr_args, 
@@ -585,11 +596,13 @@ void AdaptiveMapper::select_steal_targets(const MapperContext         ctx,
 {
  // Always send a steal request
   if (task_stealable_processor_list.size() == 0 || slow_down_mapper == true || num_ready_tasks > min_ready_tasks_to_enable_steal) {
-    return;
+    if (slow_down_mapper == false) printf("local %llx can not steal num_ready %d, min %d\n", local_proc.id, num_ready_tasks, min_ready_tasks_to_enable_steal);
+		return;
   }
   Processor target = select_stealable_processor(local_proc.kind());
   //Processor target = select_processor_by_id(local_proc.kind(), 1);
   if (target != local_proc) {
+		printf("local %llx CAN steal num_ready %d, min %d\n", local_proc.id, num_ready_tasks, min_ready_tasks_to_enable_steal);
    // output.targets.insert(target);
     task_steal_request_t request = {local_proc, 1};
     runtime->send_message(ctx, target, &request, sizeof(task_steal_request_t), TASK_STEAL_CONTINUE);
@@ -650,11 +663,12 @@ void AdaptiveMapper::report_profiling(const MapperContext      ctx,
         task_profile.is_recursive_task = is_recursive_task;
         task_profile.duration = timeline->end_time - timeline->start_time;
         task_profiling_history[task.task_id] = task_profile;
-        if (task_profile.duration / task_previous_profile.duration > task_slowdown_allowance) {
+        //if (task_profile.duration / task_previous_profile.duration > task_slowdown_allowance) {
+				if (is_slow_down_proc(local_proc.id)) {
        //     task_use_recursive[task.task_id] = true;
             if(slow_down_mapper == false) { 
               char *msg = "S"; 
-              runtime->broadcast(ctx, msg, sizeof(char), TASK_STEAL_REQUEST);
+				      runtime->broadcast(ctx, msg, sizeof(char), TASK_STEAL_REQUEST);
               slow_down_mapper = true;
               printf("@@@@@@@@############$$$$$$$$$$$!!!!!!!!!!!!! i %llx become slow down\n", local_proc.id);
             }

@@ -134,27 +134,35 @@ void top_level_task(const Task *task,
   const double alpha = drand48();
   RecursiveTaskArgument daxpy_task_args(&alpha, sizeof(double), 1, 0);
   
-  double t_start = get_cur_time();
-  for (int ct = 0; ct < 5; ct++) {
+	std::vector<FutureMap> fm_vec;
+  int ct;
+	for (ct = 0; ct < 5; ct++) {
   
-  IndexLauncher daxpy_launcher(DAXPY_TASK_ID, color_is,
-                TaskArgument(daxpy_task_args.get_args(), daxpy_task_args.get_arglen()), arg_map);
-  daxpy_launcher.add_region_requirement(
-      RegionRequirement(input_lp, 0/*projection ID*/,
-                        READ_ONLY, EXCLUSIVE, input_lr));
-  daxpy_launcher.add_field(0, FID_X);
-  daxpy_launcher.add_field(0, FID_Y);
-  daxpy_launcher.add_region_requirement(
-      RegionRequirement(output_lp, 0/*projection ID*/,
-                        WRITE_DISCARD, EXCLUSIVE, output_lr));
-  daxpy_launcher.add_field(1, FID_Z);
-  //daxpy_launcher.set_recursiveable(true);
-  FutureMap fm = runtime->execute_index_space(ctx, daxpy_launcher);
-  //fm.wait_all_results();
+	  IndexLauncher daxpy_launcher(DAXPY_TASK_ID, color_is,
+	                TaskArgument(daxpy_task_args.get_args(), daxpy_task_args.get_arglen()), arg_map);
+	  daxpy_launcher.add_region_requirement(
+	      RegionRequirement(input_lp, 0/*projection ID*/,
+	                        READ_ONLY, EXCLUSIVE, input_lr));
+	  daxpy_launcher.add_field(0, FID_X);
+	  daxpy_launcher.add_field(0, FID_Y);
+	  daxpy_launcher.add_region_requirement(
+	      RegionRequirement(output_lp, 0/*projection ID*/,
+	                        WRITE_DISCARD, EXCLUSIVE, output_lr));
+	  daxpy_launcher.add_field(1, FID_Z);
+	  //daxpy_launcher.set_recursiveable(true);
+	  FutureMap fm = runtime->execute_index_space(ctx, daxpy_launcher);
+		fm_vec.push_back(fm);
+	  //fm.wait_all_results();
+
+	}
+	double t_start = get_cur_time();
+	for (ct = 0; ct < fm_vec.size(); ct++) {
+		fm_vec[ct].wait_all_results();
+	}
   double t_end = get_cur_time();
   double sim_time = (t_end - t_start);
   printf("ELAPSED TIME = %7.3f s\n", sim_time);
-}
+
 
   RecursiveTaskArgument check_task_args(&alpha, sizeof(double), 0, 0);
                     
@@ -197,6 +205,7 @@ void init_field_task(const Task *task,
     acc[*pir] = drand48();
 }
 
+int cal_sleep_i = 0;
 void daxpy_task(const Task *task,
                 const std::vector<PhysicalRegion> &regions,
                 Context ctx, Runtime *runtime)
@@ -230,7 +239,19 @@ void daxpy_task(const Task *task,
   printf("Running daxpy computation with alpha %.8g for point %d size %d, is_recursive_task %d, host %s, thread %lld, current_proc %llx, target_proc %llx\n", 
           alpha, point, size, is_recursive_task, hostname, self, task->current_proc.id, task->target_proc.id);
 
-  if (point == 1 && is_recursive_task == 0) sleep(5);
+	struct timespec ts;
+
+	ts.tv_sec = 0;
+	ts.tv_nsec = 1000000000;
+	if (cal_sleep_i % 2 == 1 && is_slow_down_proc(task->current_proc.id)) {
+//		sleep(0.1);
+		usleep(10000);
+		//nanosleep( &ts, NULL );
+		cal_sleep_i ++;
+	} else {
+		cal_sleep_i ++;
+	}
+  //if (point == 1 && is_recursive_task == 0) sleep(5);
   for (PointInRectIterator<1> pir(rect); pir(); pir++)
     acc_z[*pir] = alpha * acc_x[*pir] + acc_y[*pir];
   

@@ -142,6 +142,8 @@ private:
   
 };
 
+int is_slow_down_proc(unsigned long long proc_id);
+
 void mapper_registration(Machine machine, Runtime *rt,
                          const std::set<Processor> &local_procs);
 
