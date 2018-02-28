@@ -148,10 +148,12 @@ AdaptiveMapper::AdaptiveMapper(Machine m,
   slow_down_mapper = false;
   
   num_ready_tasks = 0;
-  min_ready_tasks_to_enable_steal = 2;
+  min_ready_tasks_to_enable_steal = 1;
   
   std::set<Processor> all_procs;
   machine.get_all_processors(all_procs);
+	
+  local_node_id = (local_proc.id) >> 40;	
   
   // Recall that we create one mapper for every processor.  We
   // only want to print out this information one time, so only
@@ -336,6 +338,7 @@ void AdaptiveMapper::handle_message(const MapperContext ctx,
     case TASK_STEAL_REQUEST:
     {
       if (message.sender != local_proc) {
+				log_adapt_mapper.debug("%s, local_proc: %llx, received a message from proc %llx, num_ready_tasks %d, STEAL", __FUNCTION__, local_proc.id, message.sender.id, num_ready_tasks);
         // add sender to stealable processor list
         std::set<Processor>::iterator it;
         it = task_stealable_processor_list.find(message.sender);
@@ -345,7 +348,7 @@ void AdaptiveMapper::handle_message(const MapperContext ctx,
         if (num_ready_tasks <= min_ready_tasks_to_enable_steal && slow_down_mapper == false) {
           task_steal_request_t request = {local_proc, 2};
           runtime->send_message(ctx, message.sender, &request, sizeof(task_steal_request_t), TASK_STEAL_ACK);
-          log_adapt_mapper.debug("%s, local_proc: %llx, received a message from proc %llx, num_ready_tasks %d, STEAL", __FUNCTION__, local_proc.id, message.sender.id, num_ready_tasks);
+          log_adapt_mapper.debug("%s, local_proc: %llx, send a message to proc %llx, num_ready_tasks %d, STEAL_ACK", __FUNCTION__, local_proc.id, message.sender.id, num_ready_tasks);
         }
       }
       break;
@@ -432,7 +435,6 @@ void AdaptiveMapper::slice_task(const MapperContext      ctx,
   Machine::ProcessorQuery all_procs(machine);
   all_procs.only_kind(local_proc.kind());
   std::vector<Processor> procs(all_procs.begin(), all_procs.end());
-	printf("procs size %d\n", procs.size());
   switch (input.domain.get_dim())
   {
     case 1:
@@ -597,8 +599,8 @@ void AdaptiveMapper::select_steal_targets(const MapperContext         ctx,
 {
  // Always send a steal request
   if (task_stealable_processor_list.size() == 0 || slow_down_mapper == true || num_ready_tasks > min_ready_tasks_to_enable_steal) {
-		if (slow_down_mapper == false) printf("local %llx can not steal num_ready %d, min %d\n", local_proc.id, num_ready_tasks, min_ready_tasks_to_enable_steal);
-    return;
+    if (slow_down_mapper == false) printf("local %llx can not steal num_ready %d, min %d\n", local_proc.id, num_ready_tasks, min_ready_tasks_to_enable_steal);
+		return;
   }
   Processor target = select_stealable_processor(local_proc.kind());
   //Processor target = select_processor_by_id(local_proc.kind(), 1);
@@ -606,7 +608,7 @@ void AdaptiveMapper::select_steal_targets(const MapperContext         ctx,
 		printf("local %llx CAN steal num_ready %d, min %d\n", local_proc.id, num_ready_tasks, min_ready_tasks_to_enable_steal);
    // output.targets.insert(target);
     task_steal_request_t request = {local_proc, 1};
-	  runtime->send_message(ctx, target, &request, sizeof(task_steal_request_t), TASK_STEAL_CONTINUE);
+    runtime->send_message(ctx, target, &request, sizeof(task_steal_request_t), TASK_STEAL_CONTINUE);
     log_adapt_mapper.debug("%s, local_proc: %llx, steal target %llx, stealable_list size %d, ready_tasks %d", 
                            __FUNCTION__, local_proc.id, target.id,
                            task_stealable_processor_list.size(), num_ready_tasks);
@@ -647,9 +649,6 @@ void AdaptiveMapper::report_profiling(const MapperContext      ctx,
   // yourself.
 	recursive_tasks_scheduled --;
 	assert(recursive_tasks_scheduled >= 0);
-	if (is_slow_down_proc(local_proc.id)) {
-		printf("###### slowdown proc %llx\n", local_proc.id);
-	}
   if (RecursiveTaskArgument::is_task_recursiveable(&task)) {
     OperationTimeline *timeline =
       input.profiling_responses.get_measurement<OperationTimeline>();
@@ -672,7 +671,18 @@ void AdaptiveMapper::report_profiling(const MapperContext      ctx,
        //     task_use_recursive[task.task_id] = true;
             if(slow_down_mapper == false) { 
               char *msg = "S"; 
-						  runtime->broadcast(ctx, msg, sizeof(char), TASK_STEAL_REQUEST);
+					    runtime->broadcast(ctx, msg, sizeof(char), TASK_STEAL_REQUEST);
+					/*	  std::set<Processor> all_procs;
+						  machine.get_all_processors(all_procs);
+						  for (std::set<Processor>::const_iterator it = all_procs.begin();
+						        it != all_procs.end(); it++)
+						  {
+								Processor target_proc = *it;
+								if (is_on_same_node_not_util(target_proc) && target_proc.id != local_proc.id) {
+									printf("target_proc %llx, local_proc %llx\n", target_proc.id, local_proc.id);
+					//				runtime->send_message(ctx, target_proc, msg, sizeof(char), TASK_STEAL_REQUEST);
+								}
+							}*/
               slow_down_mapper = true;
               printf("@@@@@@@@############$$$$$$$$$$$!!!!!!!!!!!!! i %llx become slow down\n", local_proc.id);
             }
@@ -689,10 +699,11 @@ void AdaptiveMapper::report_profiling(const MapperContext      ctx,
         parent_task_name = (char*)parent_task->get_task_name();
       }
 
-      log_adapt_mapper.debug("%s, task: %s: local_proc: %llx, ready=%lld start=%lld stop=%lld duration=%lld, parent: %s, is_recursive_task %d",
+      log_adapt_mapper.debug("%s, task: %s: local_proc: %llx, local_node %x, ready=%lld start=%lld stop=%lld duration=%lld, parent: %s, is_recursive_task %d",
        __FUNCTION__,
   	   task.get_task_name(),
        local_proc.id,
+			 local_node_id,
   	   timeline->ready_time,
   	   timeline->start_time,
   	   timeline->end_time, timeline->end_time - timeline->start_time, parent_task_name, is_recursive_task);
@@ -789,4 +800,19 @@ void AdaptiveMapper::trigger_select_tasks_to_map(const MapperContext ctx)
 //    log_adapt_mapper.debug("proc %llx: try to trigger but event not exist",
 //                           local_proc.id);
   }
+}
+
+//--------------------------------------------------------------------------
+bool AdaptiveMapper::is_on_same_node_not_util(Processor &proc)
+//--------------------------------------------------------------------------
+{
+	if (proc.kind() == Processor::UTIL_PROC) {
+		return false;
+	}
+  unsigned node_id = (proc.id) >> 40;
+	if (node_id == local_node_id) {
+		return true;
+	}	else {
+		return false;
+	}
 }

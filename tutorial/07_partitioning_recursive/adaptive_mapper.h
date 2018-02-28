@@ -118,6 +118,8 @@ protected:
   
   void trigger_select_tasks_to_map(const MapperContext ctx);
   
+	bool is_on_same_node_not_util(Processor &proc);
+		
   long generate_random_integer(void) const 
         { return default_generate_random_integer(); }
   
@@ -139,6 +141,8 @@ private:
   
   int num_ready_tasks;
   int min_ready_tasks_to_enable_steal;
+	
+	unsigned local_node_id;
   
 };
 

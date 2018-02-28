@@ -241,6 +241,8 @@ static inline __m128 get_vec_node_voltage(Point<1> current_wire,
 }
 #endif
 
+useconds_t sleep_time = 10000;
+
 int cal_sleep_i = 0;
 
 /*static*/
@@ -250,7 +252,7 @@ void CalcNewCurrentsTask::cpu_base_impl(const Task *task, const CircuitPiece &pi
 {
 	if (cal_sleep_i % 2 == 1 && is_slow_down_proc(task->current_proc.id)) {
 		//sleep(1);
-		usleep(100000);
+		usleep(sleep_time);
 		cal_sleep_i ++;
 	} else {
 		cal_sleep_i ++;
@@ -597,7 +599,7 @@ void DistributeChargeTask::cpu_base_impl(const Task *task, const CircuitPiece &p
 {
 	if (dist_sleep_i % 2 == 1 && is_slow_down_proc(task->current_proc.id)) {
 		//sleep(1);
-		usleep(100000);
+		usleep(sleep_time);
 		dist_sleep_i ++;
 	} else {
 		dist_sleep_i ++;
@@ -730,7 +732,7 @@ void UpdateVoltagesTask::cpu_base_impl(const Task *task, const CircuitPiece &p,
 {
 	if (update_sleep_i % 2 == 1 && is_slow_down_proc(task->current_proc.id)) {
 		//sleep(1);
-		usleep(100000);
+		usleep(sleep_time);
 		update_sleep_i ++;
 	} else {
 		update_sleep_i ++;
