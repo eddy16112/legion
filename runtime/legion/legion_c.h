@@ -1661,6 +1661,11 @@ extern "C" {
                                       legion_logical_region_t handle,
                                       const char **result);
 
+  /**
+   * @see Legion::LogicalRegion::get_index_space
+   */
+  legion_index_space_t
+  legion_logical_region_get_index_space(legion_logical_region_t handle); 
   // -----------------------------------------------------------------------
   // Logical Region Tree Traversal Operations
   // -----------------------------------------------------------------------
@@ -4754,7 +4759,31 @@ extern "C" {
       legion_mapper_context_t ctx,
       legion_physical_instance_t *instances,
       size_t instances_size);
+      
+  /**
+   * used by fortran API
+   */
+  legion_physical_region_t
+  legion_get_physical_region_by_id(
+      legion_physical_region_t *regionptr, 
+      int id, 
+      int num_regions); 
+  
+  // -----------------------------------------------------------------------
+  // Combined Operations (combined of some functions)
+  // -----------------------------------------------------------------------
 
+  /**
+   * @see Legion::Task::RegionRequirement::LogicalRegion::get_index_space
+   */
+  legion_index_space_t
+  legion_task_get_index_space_from_logical_region(
+      legion_task_t task, unsigned idx);
+
+
+  void 
+  legion_convert_1d_to_2d_column_major(
+      void *src, void *dst[], legion_byte_offset_t offset, int num_columns);
 #ifdef __cplusplus
 }
 #endif

@@ -1,4 +1,4 @@
-/* Copyright 2018 Stanford University
+/* Copyright 2017 Stanford University
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,6 +32,12 @@ enum FieldIDs {
   FID_Y,
   FID_Z,
 };
+
+#ifdef __cplusplus
+extern "C" {
+void daxpy_task_f(double *alpha, int* n, double* x_ptr, double* y_ptr, double* z_ptr);
+}
+#endif
 
 void top_level_task(const Task *task,
                     const std::vector<PhysicalRegion> &regions,
@@ -238,7 +244,8 @@ void init_field_task(const Task *task,
   const int point = task->index_point.point_data[0];
   printf("Initializing field %d for block %d...\n", fid, point);
 
-  const FieldAccessor<WRITE_DISCARD,double,1> acc(regions[0], fid);
+  const FieldAccessor<WRITE_DISCARD,double,1,coord_t,
+          Realm::AffineAccessor<double,1,coord_t> > acc(regions[0], fid);
   // Note here that we get the domain for the subregion for
   // this task from the runtime which makes it safe for running
   // both as a single task and as part of an index space of tasks.
@@ -255,19 +262,25 @@ void daxpy_task(const Task *task,
   assert(regions.size() == 2);
   assert(task->regions.size() == 2);
   assert(task->arglen == sizeof(double));
-  const double alpha = *((const double*)task->args);
+  double alpha = *((const double*)task->args);
   const int point = task->index_point.point_data[0];
 
-  const FieldAccessor<READ_ONLY,double,1> acc_x(regions[0], FID_X);
-  const FieldAccessor<READ_ONLY,double,1> acc_y(regions[0], FID_Y);
-  const FieldAccessor<WRITE_DISCARD,double,1> acc_z(regions[1], FID_Z);
-  printf("Running daxpy computation with alpha %.8g for point %d...\n", 
-          alpha, point);
+  const FieldAccessor<READ_ONLY,double,1,coord_t,
+            Realm::AffineAccessor<double,1,coord_t> > acc_x(regions[0], FID_X);
+  const FieldAccessor<READ_ONLY,double,1,coord_t,
+            Realm::AffineAccessor<double,1,coord_t> > acc_y(regions[0], FID_Y);
+  const FieldAccessor<WRITE_DISCARD,double,1,coord_t,
+            Realm::AffineAccessor<double,1,coord_t> > acc_z(regions[1], FID_Z);
+  
+  Rect<1> rect = runtime->get_index_space_domain(ctx, 
+      task->regions[0].region.get_index_space());
+  double *x_ptr = (double *)acc_x.ptr(rect.lo);
+  double *y_ptr = (double *)acc_y.ptr(rect.lo);
+  double *z_ptr = (double *)acc_z.ptr(rect.lo);
 
-  Rect<1> rect = runtime->get_index_space_domain(ctx,
-                  task->regions[0].region.get_index_space());
-  for (PointInRectIterator<1> pir(rect); pir(); pir++)
-    acc_z[*pir] = alpha * acc_x[*pir] + acc_y[*pir];
+  printf("Running daxpy computation with alpha %.8g, x_ptr %p, y_ptr %p, z_ptr %p for point %d...\n", alpha, x_ptr, y_ptr, z_ptr, point);
+  int n = rect.volume();
+  daxpy_task_f(&alpha, &n, x_ptr, y_ptr, z_ptr);
 }
 
 void check_task(const Task *task,
@@ -279,9 +292,12 @@ void check_task(const Task *task,
   assert(task->arglen == sizeof(double));
   const double alpha = *((const double*)task->args);
 
-  const FieldAccessor<READ_ONLY,double,1> acc_x(regions[0], FID_X);
-  const FieldAccessor<READ_ONLY,double,1> acc_y(regions[0], FID_Y);
-  const FieldAccessor<READ_ONLY,double,1> acc_z(regions[1], FID_Z);
+  const FieldAccessor<READ_ONLY,double,1,coord_t,
+            Realm::AffineAccessor<double,1,coord_t> > acc_x(regions[0], FID_X);
+  const FieldAccessor<READ_ONLY,double,1,coord_t,
+            Realm::AffineAccessor<double,1,coord_t> > acc_y(regions[0], FID_Y);
+  const FieldAccessor<READ_ONLY,double,1,coord_t,
+            Realm::AffineAccessor<double,1,coord_t> > acc_z(regions[1], FID_Z);
 
   printf("Checking results...");
   Rect<1> rect = runtime->get_index_space_domain(ctx,
